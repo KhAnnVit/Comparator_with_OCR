@@ -1,9 +1,11 @@
 import pandas as pd
 import tkinter as tk
-from tkinter import Menu, filedialog
+from tkinter import Menu, filedialog, messagebox
+
 import customtkinter as ctk
 from tksheet import Sheet
 
+from src.utils.logger import logger
 
 class ExcelViewerFrame(ctk.CTkFrame):
     """Класс четвертого раздела: Просмотр и выделение данных из Excel"""
@@ -21,10 +23,26 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         # --- Переменные ---
         self.df = None
+
+        # Путь к открытому Excel-файлу
+        self.current_excel_path = None
+
+        # Объект pd.ExcelFile, через него удобно получать список листов
+        self.excel_file = None
+
+        # Список листов в книге
+        self.sheet_names = []
+
+        # Текущий выбранный лист
+        self.current_sheet_name = ""
+
+        # Переменная для выпадающего списка листов
+        self.sheet_var = tk.StringVar(value="Лист не выбран")
+
         self.current_cell_value = ""
         self.current_row = None
         self.current_col = None
-        self.edit_window = None  # Ссылка на окно редактирования
+        self.edit_window = None
 
         # --- Верхняя панель кнопок ---
         self.top_panel = ctk.CTkFrame(self, height=40)
@@ -33,7 +51,22 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.btn_load = ctk.CTkButton(self.top_panel, text="Загрузить Excel",
                                       command=self.load_excel, width=150)
         self.btn_load.pack(side="left", padx=5, pady=5)
+        # ---------- Выбор листа Excel ----------
+        self.sheet_label = ctk.CTkLabel(
+            self.top_panel,
+            text="Лист:"
+        )
+        self.sheet_label.pack(side="left", padx=(15, 5), pady=5)
 
+        self.sheet_menu = ctk.CTkOptionMenu(
+            self.top_panel,
+            values=["Лист не выбран"],
+            variable=self.sheet_var,
+            command=self.load_selected_sheet,
+            width=180,
+            state="disabled"
+        )
+        self.sheet_menu.pack(side="left", padx=5, pady=5)
         self.btn_zoom_in = ctk.CTkButton(self.top_panel, text="➕",
                                          command=self.zoom_in, width=40)
         self.btn_zoom_in.pack(side="left", padx=5, pady=5)
@@ -188,7 +221,14 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.edit_window = None
 
     def load_excel(self):
-        """Загружает Excel файл"""
+        """
+        Загружает Excel-файл и получает список листов.
+
+        Теперь файл не читается сразу как один лист.
+        Сначала мы открываем книгу через pd.ExcelFile,
+        получаем sheet_names, затем загружаем выбранный лист.
+        """
+
         file_path = filedialog.askopenfilename(
             filetypes=[("Excel Files", "*.xlsx *.xls")]
         )
@@ -197,36 +237,144 @@ class ExcelViewerFrame(ctk.CTkFrame):
             return
 
         try:
-            self.df = pd.read_excel(file_path)
-            self.master.controller.set_current_excel(file_path)
+            self.current_excel_path = file_path
+            self.excel_file = pd.ExcelFile(file_path)
+            self.sheet_names = self.excel_file.sheet_names
 
-            if self.df.empty:
-                print("Файл пуст!")
+            if not self.sheet_names:
+                messagebox.showwarning(
+                    "Нет листов",
+                    "В Excel-файле не найдено листов."
+                )
+                logger.warning("В Excel-файле не найдено листов: %s", file_path)
                 return
 
-            data = self.df.values.tolist()
+            # Сохраняем путь к Excel в AppState через контроллер
+            if hasattr(self.master, "controller"):
+                self.master.controller.set_current_excel(file_path)
 
-            for row in data:
-                for i in range(len(row)):
-                    if pd.isna(row[i]):
-                        row[i] = ""
-                    else:
-                        row[i] = str(row[i])
+            # Активируем выпадающий список листов
+            self.sheet_menu.configure(
+                values=self.sheet_names,
+                state="normal"
+            )
 
-            headers = [str(col) for col in self.df.columns]
+            # По умолчанию открываем первый лист
+            first_sheet = self.sheet_names[0]
+            self.sheet_var.set(first_sheet)
+            self.load_selected_sheet(first_sheet)
 
-            self.sheet.set_sheet_data(data)
-            self.sheet.headers(headers)
+            logger.info(
+                "Excel-файл загружен: %s. Листы: %s",
+                file_path,
+                self.sheet_names
+            )
+
+        except Exception:
+            logger.exception("Ошибка при загрузке Excel-файла")
+
+            messagebox.showerror(
+                "Ошибка Excel",
+                "Не удалось загрузить Excel-файл. Подробности в app.log."
+            )
+
+    def load_selected_sheet(self, sheet_name=None):
+        """
+        Загружает выбранный лист Excel в таблицу.
+
+        Этот метод вызывается:
+        - автоматически после загрузки файла;
+        - при выборе другого листа в выпадающем списке.
+        """
+
+        if sheet_name is None:
+            sheet_name = self.sheet_var.get()
+
+        if not self.current_excel_path:
+            return
+
+        if not sheet_name or sheet_name == "Лист не выбран":
+            return
+
+        try:
+            self.current_sheet_name = sheet_name
+
+            # Читаем конкретный лист
+            self.df = pd.read_excel(
+                self.current_excel_path,
+                sheet_name=sheet_name
+            )
+
+            # Сохраняем текущий лист в AppState, если метод есть в контроллере
+            if hasattr(self.master, "controller") and hasattr(self.master.controller, "set_current_excel_sheet"):
+                self.master.controller.set_current_excel_sheet(sheet_name)
+
+            self._display_dataframe(self.df)
+
+            logger.info(
+                "Загружен лист Excel: %s. Строк: %s, столбцов: %s",
+                sheet_name,
+                len(self.df),
+                len(self.df.columns)
+            )
+
+        except Exception:
+            logger.exception("Ошибка при загрузке листа Excel: %s", sheet_name)
+
+            messagebox.showerror(
+                "Ошибка листа",
+                f"Не удалось загрузить лист: {sheet_name}\n\nПодробности в app.log."
+            )
+
+    def _display_dataframe(self, df):
+        """
+        Отображает DataFrame в tksheet.
+
+        Отдельный метод нужен, чтобы не дублировать код:
+        - при первой загрузке Excel;
+        - при переключении листов.
+        """
+
+        # Сбрасываем выбранную ячейку при смене листа
+        self.current_cell_value = ""
+        self.current_row = None
+        self.current_col = None
+
+        if df is None:
+            self.sheet.set_sheet_data([[""]])
+            self.sheet.headers([""])
+            return
+
+        if df.empty:
+            self.sheet.set_sheet_data([[""]])
+            self.sheet.headers(["Пустой лист"])
             self.sheet.set_all_column_widths()
 
-            self.after(100, self._setup_context_menu)
+            messagebox.showinfo(
+                "Пустой лист",
+                f"Лист '{self.current_sheet_name}' пустой."
+            )
+            return
 
-            print(f"✅ Загружено: {len(self.df)} строк, {len(headers)} столбцов")
+        data = df.values.tolist()
 
-        except Exception as e:
-            print(f"Ошибка при загрузке Excel: {e}")
-            import traceback
-            traceback.print_exc()
+        # Преобразуем NaN и числа в строки,
+        # чтобы корректно показывать данные и отправлять их в сравнение.
+        for row in data:
+            for i in range(len(row)):
+                if pd.isna(row[i]):
+                    row[i] = ""
+                else:
+                    row[i] = str(row[i])
+
+        headers = [str(col) for col in df.columns]
+
+        self.sheet.set_sheet_data(data)
+        self.sheet.headers(headers)
+        self.sheet.set_all_column_widths()
+
+        # После перерисовки таблицы заново настраиваем контекстное меню
+        self.after(100, self._setup_context_menu)
 
     def zoom_in(self):
         self.sheet.zoom_in()
