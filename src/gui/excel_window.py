@@ -132,13 +132,23 @@ class ExcelViewerFrame(ctk.CTkFrame):
         """Срабатывает при выделении ячейки"""
         try:
             selected = self.sheet.get_selected_cells()
+
             if selected:
                 selected_list = list(selected)
                 row, col = selected_list[-1]
+
                 value = self.sheet.get_cell_data(row, col)
                 self.current_cell_value = str(value) if value is not None else ""
                 self.current_row = row
                 self.current_col = col
+
+                # Сохраняем выбранную ячейку в общем состоянии приложения
+                self.master.controller.set_current_excel_cell(
+                    row=row,
+                    col=col,
+                    value=self.current_cell_value
+                )
+
         except Exception as e:
             print(f"Ошибка on_cell_select: {e}")
 
@@ -188,6 +198,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         try:
             self.df = pd.read_excel(file_path)
+            self.master.controller.set_current_excel(file_path)
 
             if self.df.empty:
                 print("Файл пуст!")
@@ -232,22 +243,28 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.btn_zoom_reset.configure(text="100%")
 
     def send_full_cell(self, field_num):
-        """Отправляет всю ячейку в поле сравнения"""
+        """
+        Отправляет всю выбранную ячейку в поле сравнения.
+
+        Теперь Excel-раздел не обращается напрямую к CompareSection.
+        Он передаёт данные через AppController.
+        """
+
         self.on_cell_select()
 
         if not self.current_cell_value:
             print("⚠️ Ячейка не выбрана!")
             return
 
-        compare_frame = self.master.frames["tab3"]
+        self.master.controller.send_excel_cell_to_compare(
+            value=self.current_cell_value,
+            field_num=field_num
+        )
 
-        if field_num == 1:
-            compare_frame.set_text_left(self.current_cell_value)
-        else:
-            compare_frame.set_text_right(self.current_cell_value)
-
-        print(f"✅ Отправлена ячейка в Поле {field_num}: {self.current_cell_value[:50]}...")
-        self.master.select_frame("tab3")
+        print(
+            f"✅ Отправлена ячейка в Поле {field_num}: "
+            f"{self.current_cell_value[:50]}..."
+        )
 
 
 class CellEditWindow(ctk.CTkToplevel):
@@ -348,43 +365,47 @@ class CellEditWindow(ctk.CTkToplevel):
             pass
 
     def _send_selected_text(self, field_num):
-        """Отправляет выделенный текст в поле сравнения"""
+        """Отправляет выделенный текст в поле сравнения через AppController"""
         try:
             selected_text = self.textbox.get("sel.first", "sel.last").strip()
+
             if not selected_text:
                 print("⚠️ Текст не выделен!")
                 return
 
-            compare_frame = self.parent_frame.master.frames["tab3"]
+            self.parent_frame.master.controller.send_text_to_compare(
+                text=selected_text,
+                field_num=field_num,
+                source="excel"
+            )
 
-            if field_num == 1:
-                compare_frame.set_text_left(selected_text)
-            else:
-                compare_frame.set_text_right(selected_text)
-
-            print(f"✅ Отправлен выделенный текст в Поле {field_num}: {selected_text[:50]}...")
-            self.parent_frame.master.select_frame("tab3")
+            print(
+                f"✅ Отправлен выделенный текст в Поле {field_num}: "
+                f"{selected_text[:50]}..."
+            )
 
         except tk.TclError:
             print("⚠️ Текст не выделен!")
 
     def _send_full_text(self, field_num):
-        """Отправляет весь текст из окна в поле сравнения"""
+        """Отправляет весь текст из окна редактирования в поле сравнения через AppController"""
+
         full_text = self.textbox.get("1.0", "end-1c").strip()
 
         if not full_text:
             print("⚠️ Текст пуст!")
             return
 
-        compare_frame = self.parent_frame.master.frames["tab3"]
+        self.parent_frame.master.controller.send_text_to_compare(
+            text=full_text,
+            field_num=field_num,
+            source="excel"
+        )
 
-        if field_num == 1:
-            compare_frame.set_text_left(full_text)
-        else:
-            compare_frame.set_text_right(full_text)
-
-        print(f"✅ Отправлен весь текст в Поле {field_num}: {full_text[:50]}...")
-        self.parent_frame.master.select_frame("tab3")
+        print(
+            f"✅ Отправлен весь текст в Поле {field_num}: "
+            f"{full_text[:50]}..."
+        )
 
     def _save_and_close(self):
         """Сохраняет изменения и закрывает окно"""
