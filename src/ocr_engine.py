@@ -1,83 +1,78 @@
-# ocr_engine.py
+from pathlib import Path
 
 import cv2
 import numpy as np
-import pytesseract
-from config import TESSERACT_EXE, OCR_LANGUAGES
+from PIL import Image
+
+from config import OCR_LANGUAGES
+from src.models.ocr_models import OCRSettings
+from src.services.ocr_service import OCRService
+from src.utils.logger import logger
+
+
+_ocr_service = OCRService()
 
 
 def preprocess_image(img):
     """
-    Продвинутая предобработка изображения для улучшения качества OCR.
+    Старый метод предобработки.
+
+    Оставлен для обратной совместимости.
+    Новый код лучше писать через OCRService.
     """
-    # 1. Конвертируем изображение в оттенки серого
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # 2. Масштабирование (кубическое увеличение)
-    height, width = gray.shape[:2]
-    scaled = cv2.resize(gray, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
-
-    # 3. Бинаризация Оцу
-    _, binarized = cv2.threshold(scaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    return binarized
+    return _ocr_service.preprocess_numpy_image(
+        image=img,
+        mode="default"
+    )
 
 
-def extract_text_from_pil(pil_image):
+def extract_text_from_pil(pil_image, mode: str = "default"):
     """
-    Распознает текст напрямую из PIL.Image без сохранения на диск.
-    Использует настройки из config.py.
+    Старый публичный метод OCR.
+
+    Оставлен, чтобы не сломать pdf_window.py.
+
+    Внутри теперь используется OCRService.
     """
-    try:
-        # Указываем путь к исполняемому файлу Tesseract из конфига
-        pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_EXE)
 
-        # Конвертируем PIL.Image в numpy array
-        img_array = np.array(pil_image)
+    result = _ocr_service.recognize_from_pil(
+        pil_image=pil_image,
+        settings=OCRSettings(
+            mode=mode,
+            languages=OCR_LANGUAGES
+        )
+    )
 
-        # Если изображение в RGBA или RGB, конвертируем в BGR для OpenCV
-        if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
-            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        else:
-            img_bgr = img_array
+    if result.success:
+        return result.text
 
-        # Запускаем предобработку
-        processed_img = preprocess_image(img_bgr)
+    logger.error("OCR завершился ошибкой: %s", result.error_message)
 
-        # Формируем конфиг: используем языки из конфига
-        custom_config = rf'--psm 11 -l {OCR_LANGUAGES}'
-
-        # Распознаем текст
-        text = pytesseract.image_to_string(processed_img, config=custom_config)
-
-        return text.strip()
-
-    except Exception as e:
-        return f"Критическая ошибка OCR движка: {str(e)}"
+    return f"Ошибка OCR: {result.error_message}"
 
 
-def extract_text(image_path):
+def extract_text(image_path, mode: str = "default"):
     """
-    Основная функция распознавания. Принимает путь к изображению.
-    (Оставлена для обратной совместимости, если где-то используется)
+    Распознаёт текст из файла изображения.
+
+    Оставлено для обратной совместимости.
     """
+
     clean_path = str(image_path).strip('"\'')
+    image_path_obj = Path(clean_path)
 
     try:
-        pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_EXE)
+        if not image_path_obj.exists():
+            return f"Ошибка: файл не найден: {image_path_obj}"
 
-        # Читаем файл в бинарный массив
-        img_array = np.fromfile(clean_path, dtype=np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        with Image.open(image_path_obj) as img:
+            pil_image = img.copy()
 
-        if img is None:
-            return "Ошибка: Не удалось загрузить или открыть файл изображения."
+        return extract_text_from_pil(
+            pil_image=pil_image,
+            mode=mode
+        )
 
-        processed_img = preprocess_image(img)
-        custom_config = rf'--psm 11 -l {OCR_LANGUAGES}'
-
-        text = pytesseract.image_to_string(processed_img, config=custom_config)
-        return text.strip()
-
-    except Exception as e:
-        return f"Критическая ошибка OCR движка: {str(e)}"
+    except Exception as error:
+        logger.exception("Ошибка при OCR изображения из файла")
+        return f"Ошибка OCR: {error}"
