@@ -9,28 +9,76 @@ class AppController:
     """
     Центральный контроллер приложения.
 
-    Его задача — связывать окна между собой.
+    Его задача:
+    - управлять переходами между разделами;
+    - сохранять данные в AppState;
+    - передавать данные между GUI-разделами.
 
-    ВАЖНО:
-    окна GUI не должны напрямую обращаться друг к другу.
-
-    Было плохо:
-        self.master.frames["tab3"].set_text_left(text)
-
-    Станет лучше:
-        self.master.controller.send_text_to_compare(text, field_num=1)
-
-    Тогда GUI-окна становятся проще:
-    они только сообщают контроллеру, что произошло.
+    GUI-разделы не должны напрямую обращаться друг к другу.
     """
+
+    TAB_PDF = "tab1"
+    TAB_OCR = "tab2"
+    TAB_COMPARE = "tab3"
+    TAB_EXCEL = "tab4"
 
     def __init__(self, app, state: AppState):
         """
-        app — главное окно приложения, то есть объект App из main_window.py.
+        app — главное окно приложения, объект App из main_window.py.
         state — общий объект состояния приложения.
         """
         self.app = app
         self.state = state
+
+    # =========================================================
+    # ВНУТРЕННИЕ МЕТОДЫ
+    # =========================================================
+
+    def _get_frame(self, tab_name: str):
+        """
+        Безопасно получает фрейм по имени вкладки.
+
+        Возвращает:
+            frame — если вкладка существует;
+            None  — если вкладка не найдена.
+        """
+
+        frame = self.app.frames.get(tab_name)
+
+        if frame is None:
+            logger.warning("Frame не найден: %s", tab_name)
+
+        return frame
+
+    def _call_frame_method(self, tab_name: str, method_name: str, *args, **kwargs) -> bool:
+        """
+        Безопасно вызывает метод у нужного GUI-фрейма.
+
+        Например:
+            self._call_frame_method("tab3", "set_text_left", text)
+
+        Возвращает:
+            True  — если метод найден и вызван;
+            False — если frame или метод не найдены.
+        """
+
+        frame = self._get_frame(tab_name)
+
+        if frame is None:
+            return False
+
+        method = getattr(frame, method_name, None)
+
+        if method is None or not callable(method):
+            logger.warning(
+                "Frame %s не имеет метода %s",
+                tab_name,
+                method_name
+            )
+            return False
+
+        method(*args, **kwargs)
+        return True
 
     # =========================================================
     # НАВИГАЦИЯ
@@ -47,7 +95,7 @@ class AppController:
             "tab4" — Excel
         """
 
-        if tab_name not in self.app.frames:
+        if self._get_frame(tab_name) is None:
             logger.warning("Попытка перейти на неизвестную вкладку: %s", tab_name)
             return
 
@@ -62,7 +110,7 @@ class AppController:
 
     def set_current_pdf(self, pdf_path: str | Path):
         """
-        Сохраняет путь к текущему PDF-файлу в AppState.
+        Сохраняет путь к текущему PDF-файлу.
         """
 
         self.state.current_pdf_path = Path(pdf_path)
@@ -70,19 +118,19 @@ class AppController:
 
         logger.info("Текущий PDF сохранён в состоянии: %s", pdf_path)
 
+    # =========================================================
+    # OCR
+    # =========================================================
+
     def show_ocr_result(self, image: Any, text: str, source: str = "pdf_selection"):
         """
-        Получает результат OCR и передаёт его в раздел OCR.
+        Получает результат OCR и передаёт его в OCR-раздел.
 
         image — вырезанная картинка, обычно PIL.Image.
         text — распознанный текст.
         source — источник текста.
-
-        Этот метод заменит прямую связь:
-            PDFWindow -> OCRWindow
         """
 
-        # 1. Сохраняем данные в общем состоянии.
         self.state.selected_image = image
         self.state.ocr_text = text
         self.state.ocr_source = source
@@ -93,21 +141,15 @@ class AppController:
             len(text)
         )
 
-        # 2. Обновляем OCR-раздел, если он существует.
-        ocr_frame = self.app.frames.get("tab2")
+        updated = self._call_frame_method(
+            self.TAB_OCR,
+            "update_content",
+            image,
+            text
+        )
 
-        if ocr_frame is None:
-            logger.warning("OCR frame не найден: tab2")
-            return
-
-        if not hasattr(ocr_frame, "update_content"):
-            logger.warning("OCR frame не имеет метода update_content")
-            return
-
-        ocr_frame.update_content(image, text)
-
-        # 3. Переходим на вкладку OCR.
-        self.go_to_tab("tab2")
+        if updated:
+            self.go_to_tab(self.TAB_OCR)
 
     # =========================================================
     # COMPARE
@@ -132,29 +174,20 @@ class AppController:
             logger.warning("Некорректный номер поля сравнения: %s", field_num)
             return
 
-        compare_frame = self.app.frames.get("tab3")
-
-        if compare_frame is None:
-            logger.warning("Compare frame не найден: tab3")
-            return
-
         if field_num == 1:
             self.state.compare_text_1 = text
             self.state.compare_text_1_source = source
-
-            if hasattr(compare_frame, "set_text_left"):
-                compare_frame.set_text_left(text)
-            else:
-                logger.warning("Compare frame не имеет метода set_text_left")
-
+            method_name = "set_text_left"
         else:
             self.state.compare_text_2 = text
             self.state.compare_text_2_source = source
+            method_name = "set_text_right"
 
-            if hasattr(compare_frame, "set_text_right"):
-                compare_frame.set_text_right(text)
-            else:
-                logger.warning("Compare frame не имеет метода set_text_right")
+        updated = self._call_frame_method(
+            self.TAB_COMPARE,
+            method_name,
+            text
+        )
 
         logger.info(
             "Текст отправлен в поле сравнения %s. Источник: %s, длина: %s",
@@ -163,7 +196,8 @@ class AppController:
             len(text)
         )
 
-        self.go_to_tab("tab3")
+        if updated:
+            self.go_to_tab(self.TAB_COMPARE)
 
     def clear_compare(self):
         """
@@ -174,14 +208,17 @@ class AppController:
 
         self.state.reset_compare()
 
-        compare_frame = self.app.frames.get("tab3")
+        self._call_frame_method(
+            self.TAB_COMPARE,
+            "set_text_left",
+            ""
+        )
 
-        if compare_frame is not None:
-            if hasattr(compare_frame, "set_text_left"):
-                compare_frame.set_text_left("")
-
-            if hasattr(compare_frame, "set_text_right"):
-                compare_frame.set_text_right("")
+        self._call_frame_method(
+            self.TAB_COMPARE,
+            "set_text_right",
+            ""
+        )
 
         logger.info("Поля сравнения очищены")
 
@@ -200,7 +237,7 @@ class AppController:
 
     def set_current_excel_sheet(self, sheet_name: str):
         """
-        Сохраняет название текущего выбранного листа Excel в AppState.
+        Сохраняет название текущего выбранного листа Excel.
         """
 
         self.state.current_excel_sheet = sheet_name
@@ -244,9 +281,6 @@ class AppController:
     def set_status(self, message: str):
         """
         Сохраняет статусное сообщение.
-
-        Пока мы просто записываем его в AppState и лог.
-        Позже можно будет сделать общую строку статуса в главном окне.
         """
 
         self.state.set_status(message)
