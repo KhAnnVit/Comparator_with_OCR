@@ -53,6 +53,13 @@ class PDFViewerFrame(ctk.CTkFrame):
         "Без обработки": "raw",
     }
 
+    OCR_LANGUAGE_OPTIONS = {
+        "Русский": "rus",
+        "English": "eng",
+        "Қазақ": "kaz",
+        "한국어": "kor",
+    }
+
     MODE_PAN = "Перемещение"
     MODE_SELECT = "Выделение"
 
@@ -110,11 +117,12 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.start_y = 0
 
         self.ocr_mode_var = tk.StringVar(value=self.DEFAULT_OCR_MODE)
+        self.ocr_language_vars = {}
 
     def _configure_grid(self):
         """Настраивает сетку PDF-раздела."""
 
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
     # =========================================================
@@ -125,6 +133,7 @@ class PDFViewerFrame(ctk.CTkFrame):
         """Создаёт интерфейс PDF-раздела."""
 
         self._create_top_panel()
+        self._create_ocr_panel()
         self._create_canvas()
         self._create_status_label()
         self._create_context_menu()
@@ -200,19 +209,60 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.mode_switch.pack(side="left", padx=20, pady=5)
         self.mode_switch.set(self.MODE_SELECT)
 
+    def _create_ocr_panel(self):
+        """
+        Создаёт панель OCR-настроек:
+        - режим распознавания;
+        - список языков с галочками.
+        """
+
+        self.ocr_panel = ctk.CTkFrame(self, height=40)
+        self.ocr_panel.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(0, 5)
+        )
+
         self.ocr_mode_label = ctk.CTkLabel(
-            self.top_panel,
-            text="OCR:"
+            self.ocr_panel,
+            text="Режим OCR:"
         )
         self.ocr_mode_label.pack(side="left", padx=(10, 5), pady=5)
 
         self.ocr_mode_menu = ctk.CTkOptionMenu(
-            self.top_panel,
+            self.ocr_panel,
             values=list(self.OCR_MODE_MAP.keys()),
             variable=self.ocr_mode_var,
             width=150
         )
-        self.ocr_mode_menu.pack(side="left", padx=5, pady=5)
+        self.ocr_mode_menu.pack(side="left", padx=(0, 15), pady=5)
+
+        self.ocr_language_label = ctk.CTkLabel(
+            self.ocr_panel,
+            text="Языки:"
+        )
+        self.ocr_language_label.pack(side="left", padx=(5, 5), pady=5)
+
+        default_language_codes = self._get_default_ocr_language_codes()
+
+        for language_title, language_code in self.OCR_LANGUAGE_OPTIONS.items():
+            variable = tk.BooleanVar(
+                value=language_code in default_language_codes
+            )
+
+            self.ocr_language_vars[language_code] = variable
+
+            checkbox = ctk.CTkCheckBox(
+                self.ocr_panel,
+                text=language_title,
+                variable=variable,
+                onvalue=True,
+                offvalue=False,
+                width=85
+            )
+            checkbox.pack(side="left", padx=4, pady=5)
 
     def _create_canvas(self):
         """Создаёт Canvas для отображения PDF."""
@@ -222,7 +272,7 @@ class PDFViewerFrame(ctk.CTkFrame):
             bg="#2b2b2b",
             highlightthickness=0
         )
-        self.canvas.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.canvas.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
 
     def _create_status_label(self):
         """Создаёт нижнюю строку статуса."""
@@ -232,7 +282,7 @@ class PDFViewerFrame(ctk.CTkFrame):
             text="Загрузите PDF для начала работы.",
             anchor="w"
         )
-        self.status_label.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 8))
+        self.status_label.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
 
     def _create_context_menu(self):
         """Создаёт контекстное меню для выделенной области."""
@@ -1054,6 +1104,47 @@ class PDFViewerFrame(ctk.CTkFrame):
         visible_mode = self.ocr_mode_var.get()
         return self.OCR_MODE_MAP.get(visible_mode, "default")
 
+    def _get_default_ocr_language_codes(self) -> set[str]:
+        """
+        Берёт языки из config.OCR_LANGUAGES
+        и превращает строку вида 'rus+eng+kaz'
+        в множество {'rus', 'eng', 'kaz'}.
+        """
+
+        language_codes = {
+            language_code.strip()
+            for language_code in OCR_LANGUAGES.split("+")
+            if language_code.strip()
+        }
+
+        available_codes = set(self.OCR_LANGUAGE_OPTIONS.values())
+
+        selected_codes = language_codes.intersection(available_codes)
+
+        if not selected_codes:
+            return {"rus", "eng"}
+
+        return selected_codes
+
+    def get_selected_ocr_languages(self) -> str:
+        """
+        Возвращает выбранные языки OCR в формате Tesseract.
+
+        Например:
+            rus+eng+kaz
+        """
+
+        selected_codes = []
+
+        for language_code in self.OCR_LANGUAGE_OPTIONS.values():
+            variable = self.ocr_language_vars.get(language_code)
+
+            if variable is not None and variable.get():
+                selected_codes.append(language_code)
+
+        return "+".join(selected_codes)
+
+
     def send_to_ocr(self):
         """
         Вырезает выделенную область, запускает OCR
@@ -1072,14 +1163,23 @@ class PDFViewerFrame(ctk.CTkFrame):
 
         selected_mode = self.get_selected_ocr_mode()
         visible_mode = self.ocr_mode_var.get()
+        selected_languages = self.get_selected_ocr_languages()
 
+        if not selected_languages:
+            messagebox.showwarning(
+                "Языки OCR",
+                "Выберите хотя бы один язык для распознавания."
+            )
+            logger.warning("OCR не запущен: не выбран ни один язык")
+            return
         try:
             self._set_wait_cursor(True)
 
             result = self._recognize_cropped_image(
                 cropped_image=cropped_image,
                 selected_mode=selected_mode,
-                visible_mode=visible_mode
+                visible_mode=visible_mode,
+                selected_languages=selected_languages
             )
 
             if not result.success:
@@ -1089,7 +1189,8 @@ class PDFViewerFrame(ctk.CTkFrame):
             self._send_ocr_result_to_controller(
                 cropped_image=cropped_image,
                 recognized_text=result.text,
-                selected_mode=selected_mode
+                selected_mode=selected_mode,
+                selected_languages=selected_languages
             )
 
             logger.info(
@@ -1108,13 +1209,20 @@ class PDFViewerFrame(ctk.CTkFrame):
         finally:
             self._set_wait_cursor(False)
 
-    def _recognize_cropped_image(self, cropped_image, selected_mode, visible_mode):
+    def _recognize_cropped_image(
+            self,
+            cropped_image,
+            selected_mode,
+            visible_mode,
+            selected_languages
+    ):
         """Запускает OCRService для выделенной области."""
 
         logger.info(
-            "Запущено OCR из PDF. mode=%s, visible_mode=%s, image_size=%s",
+            "Запущено OCR из PDF. mode=%s, visible_mode=%s, languages=%s, image_size=%s",
             selected_mode,
             visible_mode,
+            selected_languages,
             cropped_image.size
         )
 
@@ -1122,7 +1230,7 @@ class PDFViewerFrame(ctk.CTkFrame):
             pil_image=cropped_image,
             settings=OCRSettings(
                 mode=selected_mode,
-                languages=OCR_LANGUAGES
+                languages=selected_languages
             )
         )
 
@@ -1144,7 +1252,13 @@ class PDFViewerFrame(ctk.CTkFrame):
             )
         )
 
-    def _send_ocr_result_to_controller(self, cropped_image, recognized_text, selected_mode):
+    def _send_ocr_result_to_controller(
+            self,
+            cropped_image,
+            recognized_text,
+            selected_mode,
+            selected_languages
+    ):
         """Передаёт OCR-результат в AppController."""
 
         if not hasattr(self.master, "controller"):
@@ -1158,7 +1272,7 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.master.controller.show_ocr_result(
             image=cropped_image,
             text=recognized_text,
-            source=f"pdf_selection:{selected_mode}"
+            source=f"pdf_selection:{selected_mode}:{selected_languages}"
         )
 
     def _set_wait_cursor(self, enabled: bool):
