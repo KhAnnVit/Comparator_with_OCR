@@ -7,51 +7,96 @@ from tksheet import Sheet
 
 from src.utils.logger import logger
 
+
 class ExcelViewerFrame(ctk.CTkFrame):
-    """Класс четвертого раздела: Просмотр и выделение данных из Excel"""
+    """
+    Четвёртый раздел приложения: просмотр Excel-таблиц.
+
+    Что умеет:
+    - загружать Excel-файл;
+    - выбирать лист книги;
+    - отображать таблицу через tksheet;
+    - выбирать ячейку;
+    - отправлять значение ячейки в поля сравнения;
+    - открывать ячейку в отдельном окне для просмотра/редактирования.
+    """
+
+    DEFAULT_SHEET_TEXT = "Лист не выбран"
 
     def __init__(self, master):
         super().__init__(master)
 
-        # --- Прокси для bind_all ---
+        # Прокси нужны для совместимости с tksheet.
         self.bind_all = self._bind_all_proxy
         self.unbind_all = self._unbind_all_proxy
 
-        # Настраиваем сетку
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        self._init_state()
+        self._configure_grid()
+        self._create_widgets()
+        self._bind_events()
 
-        # --- Переменные ---
+    # =========================================================
+    # ИНИЦИАЛИЗАЦИЯ
+    # =========================================================
+
+    def _init_state(self):
+        """Создаёт переменные состояния Excel-раздела."""
+
         self.df = None
 
-        # Путь к открытому Excel-файлу
         self.current_excel_path = None
-
-        # Объект pd.ExcelFile, через него удобно получать список листов
         self.excel_file = None
 
-        # Список листов в книге
         self.sheet_names = []
-
-        # Текущий выбранный лист
         self.current_sheet_name = ""
-
-        # Переменная для выпадающего списка листов
-        self.sheet_var = tk.StringVar(value="Лист не выбран")
+        self.sheet_var = tk.StringVar(value=self.DEFAULT_SHEET_TEXT)
 
         self.current_cell_value = ""
         self.current_row = None
         self.current_col = None
+
         self.edit_window = None
 
-        # --- Верхняя панель кнопок ---
+    def _configure_grid(self):
+        """Настраивает сетку основного фрейма."""
+
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+    def _bind_all_proxy(self, *args, **kwargs):
+        """Прокси для bind_all, который использует tksheet."""
+        return tk.Frame.bind_all(self, *args, **kwargs)
+
+    def _unbind_all_proxy(self, *args, **kwargs):
+        """Прокси для unbind_all, который использует tksheet."""
+        return tk.Frame.unbind_all(self, *args, **kwargs)
+
+    # =========================================================
+    # СОЗДАНИЕ ИНТЕРФЕЙСА
+    # =========================================================
+
+    def _create_widgets(self):
+        """Создаёт весь интерфейс Excel-раздела."""
+
+        self._create_top_panel()
+        self._create_table_container()
+        self._create_sheet()
+        self._setup_context_menu()
+
+    def _create_top_panel(self):
+        """Создаёт верхнюю панель управления."""
+
         self.top_panel = ctk.CTkFrame(self, height=40)
         self.top_panel.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
 
-        self.btn_load = ctk.CTkButton(self.top_panel, text="Загрузить Excel",
-                                      command=self.load_excel, width=150)
+        self.btn_load = ctk.CTkButton(
+            self.top_panel,
+            text="Загрузить Excel",
+            command=self.load_excel,
+            width=150
+        )
         self.btn_load.pack(side="left", padx=5, pady=5)
-        # ---------- Выбор листа Excel ----------
+
         self.sheet_label = ctk.CTkLabel(
             self.top_panel,
             text="Лист:"
@@ -60,32 +105,55 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         self.sheet_menu = ctk.CTkOptionMenu(
             self.top_panel,
-            values=["Лист не выбран"],
+            values=[self.DEFAULT_SHEET_TEXT],
             variable=self.sheet_var,
             command=self.load_selected_sheet,
             width=180,
             state="disabled"
         )
         self.sheet_menu.pack(side="left", padx=5, pady=5)
-        self.btn_zoom_in = ctk.CTkButton(self.top_panel, text="➕",
-                                         command=self.zoom_in, width=40)
+
+        self.btn_zoom_in = ctk.CTkButton(
+            self.top_panel,
+            text="➕",
+            command=self.zoom_in,
+            width=40
+        )
         self.btn_zoom_in.pack(side="left", padx=5, pady=5)
 
-        self.btn_zoom_out = ctk.CTkButton(self.top_panel, text="",
-                                          command=self.zoom_out, width=40)
+        self.btn_zoom_out = ctk.CTkButton(
+            self.top_panel,
+            text="➖",
+            command=self.zoom_out,
+            width=40
+        )
         self.btn_zoom_out.pack(side="left", padx=5, pady=5)
 
-        self.btn_zoom_reset = ctk.CTkButton(self.top_panel, text="100%",
-                                            command=self.zoom_reset, width=60)
+        self.btn_zoom_reset = ctk.CTkButton(
+            self.top_panel,
+            text="100%",
+            command=self.zoom_reset,
+            width=60
+        )
         self.btn_zoom_reset.pack(side="left", padx=5, pady=5)
 
-        # --- Контейнер для таблицы ---
+    def _create_table_container(self):
+        """Создаёт контейнер для таблицы."""
+
         self.table_container = tk.Frame(self, bg="#2b2b2b")
-        self.table_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.table_container.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
+            padx=10,
+            pady=10
+        )
         self.table_container.grid_rowconfigure(0, weight=1)
         self.table_container.grid_columnconfigure(0, weight=1)
 
-        # --- Создаём Sheet ---
+    def _create_sheet(self):
+        """Создаёт tksheet-таблицу."""
+
         self.sheet = Sheet(
             self.table_container,
             data=[[""]],
@@ -113,7 +181,6 @@ class ExcelViewerFrame(ctk.CTkFrame):
         )
         self.sheet.grid(row=0, column=0, sticky="nsew")
 
-        # --- ВКЛЮЧАЕМ BINDINGS (БЕЗ edit_cell!) ---
         self.sheet.enable_bindings(
             "single_select",
             "toggle_select",
@@ -128,105 +195,58 @@ class ExcelViewerFrame(ctk.CTkFrame):
             menu=True
         )
 
-        # --- Настраиваем контекстное меню для режима просмотра ---
-        self._setup_context_menu()
+    def _bind_events(self):
+        """Привязывает события таблицы."""
 
-        # --- Привязываем события ---
         self.sheet.bind("<<SheetSelect>>", self.on_cell_select)
-        self.sheet.bind("<Double-Button-1>", self.on_double_click)  # Двойной клик — наше окно
+        self.sheet.bind("<Double-Button-1>", self.on_double_click)
 
-    def _bind_all_proxy(self, *args, **kwargs):
-        return tk.Frame.bind_all(self, *args, **kwargs)
-
-    def _unbind_all_proxy(self, *args, **kwargs):
-        return tk.Frame.unbind_all(self, *args, **kwargs)
+    # =========================================================
+    # КОНТЕКСТНОЕ МЕНЮ ТАБЛИЦЫ
+    # =========================================================
 
     def _setup_context_menu(self):
-        """Настраивает контекстное меню для режима просмотра"""
-        MT = self.sheet.MT
-        MT.empty_rc_popup_menu = True
-        MT.extra_rc_func = self._on_right_click
-        MT.extra_table_rc_menu_funcs = {
-            "📋 Вся ячейка → Поле 1": {
-                "command": lambda: self.send_full_cell(1)
-            },
-            "📋 Вся ячейка → Поле 2": {
-                "command": lambda: self.send_full_cell(2)
-            },
-        }
-        print("✅ Контекстное меню настроено")
+        """Настраивает контекстное меню для tksheet."""
+
+        try:
+            mt = self.sheet.MT
+            mt.empty_rc_popup_menu = True
+            mt.extra_rc_func = self._on_right_click
+            mt.extra_table_rc_menu_funcs = {
+                "📋 Вся ячейка → Поле 1": {
+                    "command": lambda: self.send_full_cell(1)
+                },
+                "📋 Вся ячейка → Поле 2": {
+                    "command": lambda: self.send_full_cell(2)
+                },
+            }
+
+            logger.debug("Контекстное меню Excel-таблицы настроено")
+
+        except Exception:
+            logger.exception("Ошибка при настройке контекстного меню Excel")
 
     def _on_right_click(self, event_dict):
-        """Callback при правом клике в режиме просмотра"""
+        """
+        Срабатывает при правом клике по таблице.
+
+        Перед открытием контекстного меню обновляем информацию
+        о текущей выбранной ячейке.
+        """
+
         self.on_cell_select()
         return None
 
-    def on_cell_select(self, event=None):
-        """Срабатывает при выделении ячейки"""
-        try:
-            selected = self.sheet.get_selected_cells()
-
-            if selected:
-                selected_list = list(selected)
-                row, col = selected_list[-1]
-
-                value = self.sheet.get_cell_data(row, col)
-                self.current_cell_value = str(value) if value is not None else ""
-                self.current_row = row
-                self.current_col = col
-
-                # Сохраняем выбранную ячейку в общем состоянии приложения
-                self.master.controller.set_current_excel_cell(
-                    row=row,
-                    col=col,
-                    value=self.current_cell_value
-                )
-
-        except Exception as e:
-            print(f"Ошибка on_cell_select: {e}")
-
-    def on_double_click(self, event=None):
-        """
-        Двойной клик по ячейке — открывает наше окно редактирования.
-        """
-        self.on_cell_select()
-
-        # Если окно уже открыто — не открываем второе
-        if self.edit_window is not None and self.edit_window.winfo_exists():
-            self.edit_window.focus()
-            return
-
-        # Создаём новое окно редактирования
-        self.edit_window = CellEditWindow(
-            self,
-            cell_value=self.current_cell_value,
-            row=self.current_row,
-            col=self.current_col,
-            on_close=self._on_edit_window_close
-        )
-
-    def _on_edit_window_close(self, new_value):
-        """
-        Вызывается при закрытии окна редактирования.
-        Обновляет значение ячейки в таблице.
-        """
-        if new_value is not None and self.current_row is not None:
-            # Обновляем данные в DataFrame
-            self.df.iloc[self.current_row, self.current_col] = new_value
-            # Обновляем ячейку в tksheet
-            self.sheet.set_cell_data(self.current_row, self.current_col, new_value)
-            self.current_cell_value = new_value
-            print(f"✅ Ячейка обновлена: {new_value[:50]}...")
-
-        self.edit_window = None
+    # =========================================================
+    # ЗАГРУЗКА EXCEL
+    # =========================================================
 
     def load_excel(self):
         """
-        Загружает Excel-файл и получает список листов.
+        Загружает Excel-файл.
 
-        Теперь файл не читается сразу как один лист.
-        Сначала мы открываем книгу через pd.ExcelFile,
-        получаем sheet_names, затем загружаем выбранный лист.
+        Сначала получаем список листов,
+        затем автоматически открываем первый лист.
         """
 
         file_path = filedialog.askopenfilename(
@@ -249,17 +269,9 @@ class ExcelViewerFrame(ctk.CTkFrame):
                 logger.warning("В Excel-файле не найдено листов: %s", file_path)
                 return
 
-            # Сохраняем путь к Excel в AppState через контроллер
-            if hasattr(self.master, "controller"):
-                self.master.controller.set_current_excel(file_path)
+            self._save_excel_path_to_state(file_path)
+            self._enable_sheet_selector()
 
-            # Активируем выпадающий список листов
-            self.sheet_menu.configure(
-                values=self.sheet_names,
-                state="normal"
-            )
-
-            # По умолчанию открываем первый лист
             first_sheet = self.sheet_names[0]
             self.sheet_var.set(first_sheet)
             self.load_selected_sheet(first_sheet)
@@ -272,17 +284,30 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         except Exception:
             logger.exception("Ошибка при загрузке Excel-файла")
-
             messagebox.showerror(
                 "Ошибка Excel",
                 "Не удалось загрузить Excel-файл. Подробности в app.log."
             )
 
+    def _save_excel_path_to_state(self, file_path):
+        """Сохраняет путь к Excel-файлу через AppController."""
+
+        if hasattr(self.master, "controller"):
+            self.master.controller.set_current_excel(file_path)
+
+    def _enable_sheet_selector(self):
+        """Активирует выпадающий список листов."""
+
+        self.sheet_menu.configure(
+            values=self.sheet_names,
+            state="normal"
+        )
+
     def load_selected_sheet(self, sheet_name=None):
         """
         Загружает выбранный лист Excel в таблицу.
 
-        Этот метод вызывается:
+        Вызывается:
         - автоматически после загрузки файла;
         - при выборе другого листа в выпадающем списке.
         """
@@ -293,22 +318,18 @@ class ExcelViewerFrame(ctk.CTkFrame):
         if not self.current_excel_path:
             return
 
-        if not sheet_name or sheet_name == "Лист не выбран":
+        if not sheet_name or sheet_name == self.DEFAULT_SHEET_TEXT:
             return
 
         try:
             self.current_sheet_name = sheet_name
 
-            # Читаем конкретный лист
             self.df = pd.read_excel(
                 self.current_excel_path,
                 sheet_name=sheet_name
             )
 
-            # Сохраняем текущий лист в AppState, если метод есть в контроллере
-            if hasattr(self.master, "controller") and hasattr(self.master.controller, "set_current_excel_sheet"):
-                self.master.controller.set_current_excel_sheet(sheet_name)
-
+            self._save_sheet_name_to_state(sheet_name)
             self._display_dataframe(self.df)
 
             logger.info(
@@ -320,105 +341,260 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         except Exception:
             logger.exception("Ошибка при загрузке листа Excel: %s", sheet_name)
-
             messagebox.showerror(
                 "Ошибка листа",
                 f"Не удалось загрузить лист: {sheet_name}\n\nПодробности в app.log."
             )
 
+    def _save_sheet_name_to_state(self, sheet_name):
+        """Сохраняет текущий лист через AppController."""
+
+        if hasattr(self.master, "controller") and hasattr(self.master.controller, "set_current_excel_sheet"):
+            self.master.controller.set_current_excel_sheet(sheet_name)
+
+    # =========================================================
+    # ОТОБРАЖЕНИЕ ДАННЫХ
+    # =========================================================
+
     def _display_dataframe(self, df):
         """
         Отображает DataFrame в tksheet.
 
-        Отдельный метод нужен, чтобы не дублировать код:
-        - при первой загрузке Excel;
-        - при переключении листов.
+        При смене листа выбранная ячейка сбрасывается.
         """
 
-        # Сбрасываем выбранную ячейку при смене листа
-        self.current_cell_value = ""
-        self.current_row = None
-        self.current_col = None
+        self._reset_current_cell()
 
         if df is None:
-            self.sheet.set_sheet_data([[""]])
-            self.sheet.headers([""])
+            self._show_empty_table(header="")
             return
 
         if df.empty:
-            self.sheet.set_sheet_data([[""]])
-            self.sheet.headers(["Пустой лист"])
-            self.sheet.set_all_column_widths()
-
+            self._show_empty_table(header="Пустой лист")
             messagebox.showinfo(
                 "Пустой лист",
                 f"Лист '{self.current_sheet_name}' пустой."
             )
             return
 
-        data = df.values.tolist()
-
-        # Преобразуем NaN и числа в строки,
-        # чтобы корректно показывать данные и отправлять их в сравнение.
-        for row in data:
-            for i in range(len(row)):
-                if pd.isna(row[i]):
-                    row[i] = ""
-                else:
-                    row[i] = str(row[i])
-
+        data = self._prepare_dataframe_values(df)
         headers = [str(col) for col in df.columns]
 
         self.sheet.set_sheet_data(data)
         self.sheet.headers(headers)
         self.sheet.set_all_column_widths()
 
-        # После перерисовки таблицы заново настраиваем контекстное меню
         self.after(100, self._setup_context_menu)
 
-    def zoom_in(self):
-        self.sheet.zoom_in()
-        self.btn_zoom_reset.configure(text="Zoom")
+    def _prepare_dataframe_values(self, df):
+        """
+        Преобразует DataFrame в список строк для tksheet.
 
-    def zoom_out(self):
-        self.sheet.zoom_out()
-        self.btn_zoom_reset.configure(text="Zoom")
+        NaN заменяем на пустые строки,
+        остальные значения приводим к str.
+        """
 
-    def zoom_reset(self):
-        self.sheet.font(("Arial", 11, ""))
-        self.sheet.header_font(("Arial", 11, "bold"))
+        data = df.values.tolist()
+
+        for row in data:
+            for index, value in enumerate(row):
+                if pd.isna(value):
+                    row[index] = ""
+                else:
+                    row[index] = str(value)
+
+        return data
+
+    def _show_empty_table(self, header):
+        """Показывает пустую таблицу."""
+
+        self.sheet.set_sheet_data([[""]])
+        self.sheet.headers([header])
         self.sheet.set_all_column_widths()
-        self.btn_zoom_reset.configure(text="100%")
+        self.after(100, self._setup_context_menu)
+
+    def _reset_current_cell(self):
+        """Сбрасывает информацию о выбранной ячейке."""
+
+        self.current_cell_value = ""
+        self.current_row = None
+        self.current_col = None
+
+    # =========================================================
+    # ВЫБОР И РЕДАКТИРОВАНИЕ ЯЧЕЙКИ
+    # =========================================================
+
+    def on_cell_select(self, event=None):
+        """Срабатывает при выделении ячейки."""
+
+        try:
+            selected = self.sheet.get_selected_cells()
+
+            if not selected:
+                return
+
+            selected_list = list(selected)
+            row, col = selected_list[-1]
+
+            value = self.sheet.get_cell_data(row, col)
+
+            self.current_cell_value = str(value) if value is not None else ""
+            self.current_row = row
+            self.current_col = col
+
+            self._save_current_cell_to_state()
+
+        except Exception:
+            logger.exception("Ошибка при выборе Excel-ячейки")
+
+    def _save_current_cell_to_state(self):
+        """Сохраняет выбранную ячейку через AppController."""
+
+        if not hasattr(self.master, "controller"):
+            return
+
+        if self.current_row is None or self.current_col is None:
+            return
+
+        self.master.controller.set_current_excel_cell(
+            row=self.current_row,
+            col=self.current_col,
+            value=self.current_cell_value
+        )
+
+    def on_double_click(self, event=None):
+        """
+        Двойной клик по ячейке открывает окно редактирования.
+        """
+
+        self.on_cell_select()
+
+        if self.current_row is None or self.current_col is None:
+            messagebox.showwarning(
+                "Ячейка не выбрана",
+                "Сначала выберите ячейку."
+            )
+            return
+
+        if self.edit_window is not None and self.edit_window.winfo_exists():
+            self.edit_window.focus()
+            return
+
+        self.edit_window = CellEditWindow(
+            parent=self,
+            cell_value=self.current_cell_value,
+            row=self.current_row,
+            col=self.current_col,
+            on_close=self._on_edit_window_close
+        )
+
+    def _on_edit_window_close(self, new_value):
+        """
+        Вызывается при закрытии окна редактирования.
+
+        Если пользователь сохранил изменения,
+        обновляем DataFrame, tksheet и AppState.
+        """
+
+        if (
+            new_value is not None
+            and self.df is not None
+            and self.current_row is not None
+            and self.current_col is not None
+        ):
+            self.df.iloc[self.current_row, self.current_col] = new_value
+            self.sheet.set_cell_data(self.current_row, self.current_col, new_value)
+
+            self.current_cell_value = new_value
+            self._save_current_cell_to_state()
+
+            logger.info(
+                "Excel-ячейка обновлена. row=%s, col=%s, value_length=%s",
+                self.current_row,
+                self.current_col,
+                len(new_value)
+            )
+
+        self.edit_window = None
+
+    # =========================================================
+    # ОТПРАВКА В СРАВНЕНИЕ
+    # =========================================================
 
     def send_full_cell(self, field_num):
         """
         Отправляет всю выбранную ячейку в поле сравнения.
-
-        Теперь Excel-раздел не обращается напрямую к CompareSection.
-        Он передаёт данные через AppController.
         """
 
         self.on_cell_select()
 
         if not self.current_cell_value:
-            print("⚠️ Ячейка не выбрана!")
+            messagebox.showwarning(
+                "Ячейка не выбрана",
+                "Выберите ячейку с текстом."
+            )
+            logger.warning("Попытка отправить пустую Excel-ячейку в сравнение")
             return
 
-        self.master.controller.send_excel_cell_to_compare(
-            value=self.current_cell_value,
+        self._send_text_to_compare(
+            text=self.current_cell_value,
             field_num=field_num
         )
 
-        print(
-            f"✅ Отправлена ячейка в Поле {field_num}: "
-            f"{self.current_cell_value[:50]}..."
+    def _send_text_to_compare(self, text, field_num):
+        """
+        Отправляет текст в поле сравнения через AppController.
+        """
+
+        if not hasattr(self.master, "controller"):
+            logger.warning("AppController не найден. Текст из Excel не отправлен.")
+            return
+
+        self.master.controller.send_text_to_compare(
+            text=text,
+            field_num=field_num,
+            source="excel"
         )
+
+        logger.info(
+            "Текст из Excel отправлен в поле сравнения %s. Длина: %s",
+            field_num,
+            len(text)
+        )
+
+    # =========================================================
+    # МАСШТАБ
+    # =========================================================
+
+    def zoom_in(self):
+        """Увеличивает масштаб таблицы."""
+
+        self.sheet.zoom_in()
+        self.btn_zoom_reset.configure(text="Zoom")
+
+    def zoom_out(self):
+        """Уменьшает масштаб таблицы."""
+
+        self.sheet.zoom_out()
+        self.btn_zoom_reset.configure(text="Zoom")
+
+    def zoom_reset(self):
+        """Сбрасывает масштаб таблицы."""
+
+        self.sheet.font(("Arial", 11, ""))
+        self.sheet.header_font(("Arial", 11, "bold"))
+        self.sheet.set_all_column_widths()
+        self.btn_zoom_reset.configure(text="100%")
 
 
 class CellEditWindow(ctk.CTkToplevel):
     """
-    Кастомное окно редактирования ячейки на CustomTkinter.
-    Показывает содержимое ячейки и позволяет выделить текст.
+    Окно просмотра/редактирования Excel-ячейки.
+
+    Позволяет:
+    - просмотреть полный текст ячейки;
+    - отредактировать текст;
+    - отправить весь текст или выделенный фрагмент в сравнение.
     """
 
     def __init__(self, parent, cell_value, row, col, on_close):
@@ -429,24 +605,35 @@ class CellEditWindow(ctk.CTkToplevel):
         self.row = row
         self.col = col
 
-        # Настройки окна
-        self.title(f"Редактирование ячейки [{row}, {col}]")
+        self._configure_window()
+        self._create_widgets(cell_value)
+        self._create_context_menu()
+        self._bind_events()
+
+    # =========================================================
+    # СОЗДАНИЕ ОКНА
+    # =========================================================
+
+    def _configure_window(self):
+        """Настраивает окно."""
+
+        self.title(f"Редактирование ячейки [{self.row}, {self.col}]")
         self.geometry("500x400")
         self.resizable(True, True)
 
-        # Делаем окно модальным (блокирует родительское окно)
-        self.transient(parent.master)
+        self.transient(self.parent_frame.master)
         self.grab_set()
 
-        # --- Заголовок ---
+    def _create_widgets(self, cell_value):
+        """Создаёт элементы окна."""
+
         self.title_label = ctk.CTkLabel(
             self,
-            text=f"Ячейка [{row}, {col}]",
+            text=f"Ячейка [{self.row}, {self.col}]",
             font=ctk.CTkFont(size=16, weight="bold")
         )
         self.title_label.pack(pady=(10, 5))
 
-        # --- Текстовое поле ---
         self.textbox = ctk.CTkTextbox(
             self,
             wrap="word",
@@ -456,30 +643,6 @@ class CellEditWindow(ctk.CTkToplevel):
         self.textbox.pack(fill="both", expand=True, padx=10, pady=10)
         self.textbox.insert("1.0", cell_value)
 
-        # --- Контекстное меню ---
-        self.context_menu = Menu(self, tearoff=0)
-        self.context_menu.add_command(
-            label="➕ Выделенный текст → Поле 1",
-            command=lambda: self._send_selected_text(1)
-        )
-        self.context_menu.add_command(
-            label="➕ Выделенный текст → Поле 2",
-            command=lambda: self._send_selected_text(2)
-        )
-        self.context_menu.add_separator()
-        self.context_menu.add_command(
-            label="📋 Вся ячейка → Поле 1",
-            command=lambda: self._send_full_text(1)
-        )
-        self.context_menu.add_command(
-            label="📋 Вся ячейка → Поле 2",
-            command=lambda: self._send_full_text(2)
-        )
-
-        # Привязываем правый клик
-        self.textbox.bind("<Button-3>", self._show_context_menu)
-
-        # --- Кнопки ---
         self.button_frame = ctk.CTkFrame(self)
         self.button_frame.pack(fill="x", padx=10, pady=(0, 10))
 
@@ -499,71 +662,110 @@ class CellEditWindow(ctk.CTkToplevel):
         )
         self.btn_cancel.pack(side="right", padx=5, pady=5)
 
-        # Обработчик закрытия окна (крестик)
-        self.protocol("WM_DELETE_WINDOW", self._save_and_close)
-
-        # Фокус на текстовое поле
         self.textbox.focus()
 
+    def _create_context_menu(self):
+        """Создаёт контекстное меню текстового поля."""
+
+        self.context_menu = Menu(self, tearoff=0)
+
+        self.context_menu.add_command(
+            label="➕ Выделенный текст → Поле 1",
+            command=lambda: self._send_selected_text(1)
+        )
+        self.context_menu.add_command(
+            label="➕ Выделенный текст → Поле 2",
+            command=lambda: self._send_selected_text(2)
+        )
+
+        self.context_menu.add_separator()
+
+        self.context_menu.add_command(
+            label="📋 Вся ячейка → Поле 1",
+            command=lambda: self._send_full_text(1)
+        )
+        self.context_menu.add_command(
+            label="📋 Вся ячейка → Поле 2",
+            command=lambda: self._send_full_text(2)
+        )
+
+    def _bind_events(self):
+        """Привязывает события окна."""
+
+        self.textbox.bind("<Button-3>", self._show_context_menu)
+        self.protocol("WM_DELETE_WINDOW", self._save_and_close)
+
+    # =========================================================
+    # КОНТЕКСТНОЕ МЕНЮ
+    # =========================================================
+
     def _show_context_menu(self, event):
-        """Показывает контекстное меню"""
+        """Показывает контекстное меню."""
+
         try:
             self.context_menu.post(event.x_root, event.y_root)
         except Exception:
-            pass
+            logger.exception("Ошибка при открытии контекстного меню ячейки")
+
+    # =========================================================
+    # ОТПРАВКА ТЕКСТА В СРАВНЕНИЕ
+    # =========================================================
 
     def _send_selected_text(self, field_num):
-        """Отправляет выделенный текст в поле сравнения через AppController"""
+        """Отправляет выделенный текст в поле сравнения."""
+
         try:
             selected_text = self.textbox.get("sel.first", "sel.last").strip()
-
-            if not selected_text:
-                print("⚠️ Текст не выделен!")
-                return
-
-            self.parent_frame.master.controller.send_text_to_compare(
-                text=selected_text,
-                field_num=field_num,
-                source="excel"
-            )
-
-            print(
-                f"✅ Отправлен выделенный текст в Поле {field_num}: "
-                f"{selected_text[:50]}..."
-            )
-
         except tk.TclError:
-            print("⚠️ Текст не выделен!")
+            selected_text = ""
+
+        if not selected_text:
+            messagebox.showwarning(
+                "Текст не выделен",
+                "Сначала выделите текст."
+            )
+            logger.warning("Попытка отправить невыделенный текст из Excel-ячейки")
+            return
+
+        self.parent_frame._send_text_to_compare(
+            text=selected_text,
+            field_num=field_num
+        )
 
     def _send_full_text(self, field_num):
-        """Отправляет весь текст из окна редактирования в поле сравнения через AppController"""
+        """Отправляет весь текст ячейки в поле сравнения."""
 
         full_text = self.textbox.get("1.0", "end-1c").strip()
 
         if not full_text:
-            print("⚠️ Текст пуст!")
+            messagebox.showwarning(
+                "Текст пуст",
+                "В ячейке нет текста для отправки."
+            )
+            logger.warning("Попытка отправить пустой текст из окна Excel-ячейки")
             return
 
-        self.parent_frame.master.controller.send_text_to_compare(
+        self.parent_frame._send_text_to_compare(
             text=full_text,
-            field_num=field_num,
-            source="excel"
+            field_num=field_num
         )
 
-        print(
-            f"✅ Отправлен весь текст в Поле {field_num}: "
-            f"{full_text[:50]}..."
-        )
+    # =========================================================
+    # СОХРАНЕНИЕ / ЗАКРЫТИЕ
+    # =========================================================
 
     def _save_and_close(self):
-        """Сохраняет изменения и закрывает окно"""
+        """Сохраняет изменения и закрывает окно."""
+
         new_value = self.textbox.get("1.0", "end-1c")
+
         self.grab_release()
         self.destroy()
         self.on_close_callback(new_value)
 
     def _cancel_and_close(self):
-        """Закрывает окно без сохранения"""
+        """Закрывает окно без сохранения."""
+
         self.grab_release()
         self.destroy()
         self.on_close_callback(None)
