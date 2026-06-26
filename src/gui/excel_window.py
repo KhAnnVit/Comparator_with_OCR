@@ -1,10 +1,10 @@
-import pandas as pd
 import tkinter as tk
 from tkinter import Menu, filedialog, messagebox
 
 import customtkinter as ctk
 from tksheet import Sheet
 
+from src.services.excel_service import ExcelService
 from src.utils.logger import logger
 
 
@@ -26,6 +26,8 @@ class ExcelViewerFrame(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master)
 
+        self.excel_service = ExcelService()
+
         # Прокси нужны для совместимости с tksheet.
         self.bind_all = self._bind_all_proxy
         self.unbind_all = self._unbind_all_proxy
@@ -45,7 +47,6 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.df = None
 
         self.current_excel_path = None
-        self.excel_file = None
 
         self.sheet_names = []
         self.current_sheet_name = ""
@@ -245,8 +246,12 @@ class ExcelViewerFrame(ctk.CTkFrame):
         """
         Загружает Excel-файл.
 
-        Сначала получаем список листов,
-        затем автоматически открываем первый лист.
+        GUI отвечает только за:
+        - выбор файла;
+        - показ ошибок;
+        - обновление выпадающего списка листов.
+
+        Работа с pandas находится в ExcelService.
         """
 
         file_path = filedialog.askopenfilename(
@@ -256,38 +261,39 @@ class ExcelViewerFrame(ctk.CTkFrame):
         if not file_path:
             return
 
-        try:
-            self.current_excel_path = file_path
-            self.excel_file = pd.ExcelFile(file_path)
-            self.sheet_names = self.excel_file.sheet_names
+        result = self.excel_service.load_workbook_info(file_path)
 
-            if not self.sheet_names:
-                messagebox.showwarning(
-                    "Нет листов",
-                    "В Excel-файле не найдено листов."
-                )
-                logger.warning("В Excel-файле не найдено листов: %s", file_path)
-                return
+        if not result.success:
+            self._handle_excel_load_error(result.error_message)
+            return
 
-            self._save_excel_path_to_state(file_path)
-            self._enable_sheet_selector()
+        self.current_excel_path = result.file_path
+        self.sheet_names = result.sheet_names
 
-            first_sheet = self.sheet_names[0]
-            self.sheet_var.set(first_sheet)
-            self.load_selected_sheet(first_sheet)
+        self._save_excel_path_to_state(result.file_path)
+        self._enable_sheet_selector()
 
-            logger.info(
-                "Excel-файл загружен: %s. Листы: %s",
-                file_path,
-                self.sheet_names
-            )
+        first_sheet = self.sheet_names[0]
+        self.sheet_var.set(first_sheet)
+        self.load_selected_sheet(first_sheet)
 
-        except Exception:
-            logger.exception("Ошибка при загрузке Excel-файла")
-            messagebox.showerror(
-                "Ошибка Excel",
-                "Не удалось загрузить Excel-файл. Подробности в app.log."
-            )
+        logger.info(
+            "Excel-файл загружен в интерфейс: %s. Листы: %s",
+            result.file_path,
+            result.sheet_names
+        )
+
+    def _handle_excel_load_error(self, error_message):
+        """
+        Показывает ошибку загрузки Excel-файла.
+        """
+
+        logger.warning("Excel-файл не загружен: %s", error_message)
+
+        messagebox.showerror(
+            "Ошибка Excel",
+            f"Не удалось загрузить Excel-файл.\n\n{error_message}"
+        )
 
     def _save_excel_path_to_state(self, file_path):
         """Сохраняет путь к Excel-файлу через AppController."""
@@ -321,55 +327,78 @@ class ExcelViewerFrame(ctk.CTkFrame):
         if not sheet_name or sheet_name == self.DEFAULT_SHEET_TEXT:
             return
 
-        try:
-            self.current_sheet_name = sheet_name
+        result = self.excel_service.load_sheet(
+            excel_path=self.current_excel_path,
+            sheet_name=sheet_name
+        )
 
-            self.df = pd.read_excel(
-                self.current_excel_path,
-                sheet_name=sheet_name
+        if not result.success:
+            self._handle_sheet_load_error(
+                sheet_name=sheet_name,
+                error_message=result.error_message
             )
+            return
 
-            self._save_sheet_name_to_state(sheet_name)
-            self._display_dataframe(self.df)
+        self.current_sheet_name = result.sheet_name
+        self.df = result.dataframe
 
-            logger.info(
-                "Загружен лист Excel: %s. Строк: %s, столбцов: %s",
-                sheet_name,
-                len(self.df),
-                len(self.df.columns)
+        self._save_sheet_name_to_state(result.sheet_name)
+        self._display_sheet_data(
+            data=result.data,
+            headers=result.headers,
+            is_empty=result.is_empty
+        )
+
+        logger.info(
+            "Excel-лист загружен в интерфейс: %s. Строк: %s, столбцов: %s",
+            result.sheet_name,
+            result.row_count,
+            result.column_count
+        )
+
+    def _handle_sheet_load_error(self, sheet_name, error_message):
+        """
+        Показывает ошибку загрузки листа Excel.
+        """
+
+        logger.warning(
+            "Excel-лист не загружен. sheet=%s, error=%s",
+            sheet_name,
+            error_message
+        )
+
+        messagebox.showerror(
+            "Ошибка листа",
+            (
+                f"Не удалось загрузить лист: {sheet_name}\n\n"
+                f"{error_message}"
             )
-
-        except Exception:
-            logger.exception("Ошибка при загрузке листа Excel: %s", sheet_name)
-            messagebox.showerror(
-                "Ошибка листа",
-                f"Не удалось загрузить лист: {sheet_name}\n\nПодробности в app.log."
-            )
+        )
 
     def _save_sheet_name_to_state(self, sheet_name):
         """Сохраняет текущий лист через AppController."""
 
-        if hasattr(self.master, "controller") and hasattr(self.master.controller, "set_current_excel_sheet"):
+        if (
+                hasattr(self.master, "controller")
+                and hasattr(self.master.controller, "set_current_excel_sheet")
+        ):
             self.master.controller.set_current_excel_sheet(sheet_name)
 
     # =========================================================
     # ОТОБРАЖЕНИЕ ДАННЫХ
     # =========================================================
 
-    def _display_dataframe(self, df):
+    def _display_sheet_data(self, data, headers, is_empty=False):
         """
-        Отображает DataFrame в tksheet.
+        Отображает данные листа в tksheet.
 
-        При смене листа выбранная ячейка сбрасывается.
+        Данные уже подготовлены ExcelService.
+        GUI только показывает их.
         """
 
         self._reset_current_cell()
 
-        if df is None:
-            self._show_empty_table(header="")
-            return
-
-        if df.empty:
+        if is_empty:
             self._show_empty_table(header="Пустой лист")
             messagebox.showinfo(
                 "Пустой лист",
@@ -377,33 +406,15 @@ class ExcelViewerFrame(ctk.CTkFrame):
             )
             return
 
-        data = self._prepare_dataframe_values(df)
-        headers = [str(col) for col in df.columns]
+        if not data:
+            self._show_empty_table(header="")
+            return
 
         self.sheet.set_sheet_data(data)
         self.sheet.headers(headers)
         self.sheet.set_all_column_widths()
 
         self.after(100, self._setup_context_menu)
-
-    def _prepare_dataframe_values(self, df):
-        """
-        Преобразует DataFrame в список строк для tksheet.
-
-        NaN заменяем на пустые строки,
-        остальные значения приводим к str.
-        """
-
-        data = df.values.tolist()
-
-        for row in data:
-            for index, value in enumerate(row):
-                if pd.isna(value):
-                    row[index] = ""
-                else:
-                    row[index] = str(value)
-
-        return data
 
     def _show_empty_table(self, header):
         """Показывает пустую таблицу."""
