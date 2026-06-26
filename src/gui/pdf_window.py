@@ -3,13 +3,14 @@ import tkinter as tk
 from tkinter import filedialog, Menu, messagebox
 
 from PIL import Image, ImageTk
-from pdf2image import convert_from_path
 
 from config import POPPLER_PATH, OCR_LANGUAGES
 from src.models.ocr_models import OCRSettings
 from src.models.image_crop_models import ImageCropRequest
+from src.models.pdf_models import PDFLoadSettings
 from src.services.ocr_service import OCRService
 from src.services.image_crop_service import ImageCropService
+from src.services.pdf_service import PDFService
 from src.utils.logger import logger
 
 
@@ -53,6 +54,7 @@ class PDFViewerFrame(ctk.CTkFrame):
 
         self.ocr_service = OCRService()
         self.image_crop_service = ImageCropService()
+        self.pdf_service = PDFService()
 
         self._init_state()
         self._configure_grid()
@@ -273,8 +275,22 @@ class PDFViewerFrame(ctk.CTkFrame):
     # ЗАГРУЗКА PDF
     # =========================================================
 
+    # =========================================================
+    # ЗАГРУЗКА PDF
+    # =========================================================
+
     def load_pdf(self):
-        """Открывает PDF и загружает первую страницу."""
+        """
+        Открывает PDF и загружает первую страницу.
+
+        GUI-класс отвечает только за:
+        - выбор файла;
+        - показ статуса;
+        - показ ошибок;
+        - передачу результата в интерфейс.
+
+        Сама загрузка PDF находится в PDFService.
+        """
 
         file_path = filedialog.askopenfilename(
             title="Выберите PDF-файл",
@@ -288,51 +304,63 @@ class PDFViewerFrame(ctk.CTkFrame):
             self.set_status("Загрузка PDF...")
             self.update_idletasks()
 
-            logger.info("Загрузка PDF: %s", file_path)
+            result = self._load_pdf_with_service(file_path)
 
-            pages = self._convert_pdf_to_images(file_path)
-
-            if not pages:
-                self._handle_empty_pdf()
+            if not result.success:
+                self._handle_pdf_load_error(result.error_message)
                 return
 
             self._set_loaded_pdf(
-                file_path=file_path,
-                first_page=pages[0]
+                file_path=result.pdf_path,
+                first_page=result.first_page
             )
 
             logger.info(
-                "PDF успешно загружен. Размер первой страницы: %sx%s",
-                self.original_image.width,
-                self.original_image.height
+                "PDF успешно загружен в интерфейс. path=%s, pages=%s, first_page_size=%sx%s",
+                result.pdf_path,
+                result.page_count,
+                result.first_page.width,
+                result.first_page.height
             )
 
         except Exception:
-            logger.exception("Ошибка при загрузке PDF")
+            logger.exception("Ошибка при загрузке PDF в интерфейсе")
+
             messagebox.showerror(
                 "Ошибка загрузки PDF",
-                "Не удалось загрузить PDF. Проверьте файл и путь к Poppler."
+                "Не удалось загрузить PDF. Подробности в app.log."
             )
+
             self.set_status("Ошибка загрузки PDF.")
 
-    def _convert_pdf_to_images(self, file_path):
-        """Конвертирует PDF в список PIL-изображений."""
+    def _load_pdf_with_service(self, file_path):
+        """
+        Загружает PDF через PDFService.
+        """
 
-        return convert_from_path(
-            file_path,
+        settings = PDFLoadSettings(
             dpi=self.PDF_DPI,
-            poppler_path=str(POPPLER_PATH)
+            poppler_path=POPPLER_PATH
         )
 
-    def _handle_empty_pdf(self):
-        """Показывает предупреждение, если PDF не дал страниц."""
-
-        messagebox.showwarning(
-            "PDF не загружен",
-            "Не удалось получить страницы из PDF-файла."
+        return self.pdf_service.load_first_page(
+            pdf_path=file_path,
+            settings=settings
         )
+
+    def _handle_pdf_load_error(self, error_message):
+        """
+        Показывает ошибку загрузки PDF.
+        """
+
+        logger.warning("PDF не загружен: %s", error_message)
+
+        messagebox.showerror(
+            "Ошибка загрузки PDF",
+            f"Не удалось загрузить PDF.\n\n{error_message}"
+        )
+
         self.set_status("PDF не загружен.")
-        logger.warning("PDF не загружен: список страниц пуст")
 
     def _set_loaded_pdf(self, file_path, first_page):
         """
@@ -352,7 +380,9 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.set_status(f"PDF загружен: {file_path}")
 
     def _save_pdf_path_to_state(self, file_path):
-        """Сохраняет путь к PDF через AppController."""
+        """
+        Сохраняет путь к PDF через AppController.
+        """
 
         if hasattr(self.master, "controller"):
             self.master.controller.set_current_pdf(file_path)
