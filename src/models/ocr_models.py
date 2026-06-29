@@ -7,22 +7,15 @@ class OCRSettings:
     """
     Настройки OCR.
 
-    mode:
-        "default"     — обычный режим, похожий на текущий;
-        "small_text"  — мелкий текст;
-        "block"       — текстовый блок;
-        "composition" — состав/ингредиенты;
-        "raw"         — без агрессивной предобработки.
+    В приложении используется один универсальный OCR-сценарий:
+    большой блок мелкого текста с возможными спецсимволами
+    и цветным текстом/фоном.
 
-    languages:
-        языки Tesseract, например "rus+eng".
-
-    psm:
-        ручной режим сегментации страницы Tesseract.
-        Если None, сервис выберет psm сам по mode.
+    mode оставлен только для обратной совместимости со старым кодом.
+    В новой логике он не используется.
     """
 
-    mode: str = "default"
+    mode: str = "unified"
     languages: str = "rus+eng"
     psm: Optional[int] = None
 
@@ -31,21 +24,15 @@ class OCRSettings:
 class OCRResult:
     """
     Результат OCR.
-
-    Теперь OCR не возвращает ошибку как текст.
-    Вместо этого есть:
-        success=True/False
-        text
-        error_message
     """
 
     success: bool
     text: str = ""
     error_message: str = ""
 
-    mode: str = "default"
+    mode: str = "unified"
     languages: str = "rus+eng"
-    psm: int = 11
+    psm: int = 6
 
     original_size: tuple[int, int] | None = None
     processed_size: tuple[int, int] | None = None

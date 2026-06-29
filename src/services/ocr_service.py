@@ -1,3 +1,5 @@
+import re
+
 import cv2
 import numpy as np
 import pytesseract
@@ -12,48 +14,17 @@ class OCRService:
     """
     Сервис распознавания текста.
 
-    Этот класс не зависит от CustomTkinter.
-    Он отвечает только за:
-    - подготовку изображения;
-    - выбор режима OCR;
-    - запуск Tesseract;
-    - возврат нормального OCRResult.
+    Логика под реальные задачи приложения:
+
+    - пользователь выделяет большой блок мелкого текста;
+    - текст может быть цветным;
+    - фон может быть цветным;
+    - исходник для OCR уже качественный;
+    - спецсимволы важны: °, №, %, точки, запятые, ●, скобки;
+    - предобработка должна не портить оригинал.
     """
 
-    MODE_CONFIGS = {
-        # Почти как текущий режим:
-        # хорошо подходит для разрозненных кусочков текста.
-        "default": {
-            "psm": 11,
-            "preprocess": "otsu_2x"
-        },
-
-        # Для мелкого текста на упаковках.
-        "small_text": {
-            "psm": 6,
-            "preprocess": "adaptive_3x"
-        },
-
-        # Для цельного прямоугольного блока текста.
-        "block": {
-            "psm": 6,
-            "preprocess": "otsu_2x"
-        },
-
-        # Для составов/ингредиентов.
-        # Обычно состав идёт как несколько строк или один плотный блок.
-        "composition": {
-            "psm": 6,
-            "preprocess": "adaptive_3x"
-        },
-
-        # Без агрессивной предобработки.
-        # Иногда Tesseract сам лучше справляется с исходным изображением.
-        "raw": {
-            "psm": 11,
-            "preprocess": "raw"
-        },
-    }
+    DEFAULT_PSM = 6
 
     def __init__(self):
         pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_EXE)
@@ -68,79 +39,73 @@ class OCRService:
         settings: OCRSettings | None = None
     ) -> OCRResult:
         """
-        Распознаёт текст из PIL.Image и возвращает OCRResult.
+        Распознаёт текст из PIL.Image.
+
+        pil_image должен быть crop из качественного оригинала,
+        а не из облегчённой картинки для просмотра.
         """
 
         if settings is None:
             settings = OCRSettings(
-                mode="default",
                 languages=OCR_LANGUAGES
             )
 
-        mode = settings.mode
-
-        if mode not in self.MODE_CONFIGS:
-            logger.warning("Неизвестный OCR-режим '%s'. Используется default.", mode)
-            mode = "default"
-
-        mode_config = self.MODE_CONFIGS[mode]
-
-        psm = settings.psm if settings.psm is not None else mode_config["psm"]
         languages = settings.languages or OCR_LANGUAGES
+        psm = settings.psm if settings.psm is not None else self.DEFAULT_PSM
 
         try:
             if pil_image is None:
                 return OCRResult(
                     success=False,
                     error_message="Изображение не передано в OCR.",
-                    mode=mode,
+                    mode="unified",
                     languages=languages,
                     psm=psm
                 )
 
             original_size = pil_image.size
 
-            # Приводим изображение к RGB.
             pil_rgb = pil_image.convert("RGB")
             img_rgb = np.array(pil_rgb)
 
-            processed_img = self._preprocess_rgb_image(
-                img_rgb=img_rgb,
-                preprocess_mode=mode_config["preprocess"]
-            )
+            processed_img = self._preprocess_packaging_text(img_rgb)
 
             processed_size = (
                 processed_img.shape[1],
                 processed_img.shape[0]
             )
 
+            tesseract_config = self._build_tesseract_config(psm=psm)
+
             logger.info(
-                "OCR запущен. mode=%s, psm=%s, languages=%s, original_size=%s, processed_size=%s",
-                mode,
+                (
+                    "OCR запущен. mode=unified, psm=%s, languages=%s, "
+                    "original_size=%s, processed_size=%s, config=%s"
+                ),
                 psm,
                 languages,
                 original_size,
-                processed_size
+                processed_size,
+                tesseract_config
             )
 
             text = pytesseract.image_to_string(
                 processed_img,
                 lang=languages,
-                config=f"--psm {psm}"
+                config=tesseract_config
             )
 
-            text = text.strip()
+            text = self._postprocess_text(text)
 
             logger.info(
-                "OCR завершён. mode=%s, длина текста=%s",
-                mode,
+                "OCR завершён. mode=unified, длина текста=%s",
                 len(text)
             )
 
             return OCRResult(
                 success=True,
                 text=text,
-                mode=mode,
+                mode="unified",
                 languages=languages,
                 psm=psm,
                 original_size=original_size,
@@ -154,100 +119,363 @@ class OCRService:
                 success=False,
                 text="",
                 error_message=str(error),
-                mode=mode,
+                mode="unified",
                 languages=languages,
                 psm=psm,
                 original_size=getattr(pil_image, "size", None)
             )
 
     # =========================================================
+    # НАСТРОЙКИ TESSERACT
+    # =========================================================
+
+    def _build_tesseract_config(self, psm: int) -> str:
+        """
+        Настройки Tesseract для большого блока мелкого текста.
+
+        --psm 6:
+            считаем, что выделенная область содержит один блок текста.
+
+        --oem 1:
+            используем LSTM OCR engine.
+
+        --dpi 300:
+            явно говорим Tesseract, что изображение достаточно качественное.
+        """
+
+        return (
+            f"--oem 1 "
+            f"--psm {psm} "
+            f"--dpi 300 "
+            f"-c user_defined_dpi=300 "
+            f"-c preserve_interword_spaces=1"
+        )
+
+    # =========================================================
     # ПРЕДОБРАБОТКА
     # =========================================================
 
-    def _preprocess_rgb_image(
-        self,
-        img_rgb: np.ndarray,
-        preprocess_mode: str
-    ) -> np.ndarray:
+    def _preprocess_packaging_text(self, img_rgb: np.ndarray) -> np.ndarray:
         """
-        Выбирает способ предобработки изображения.
-        """
+        Минимальная предобработка.
 
-        if preprocess_mode == "raw":
-            return img_rgb
+        Важно:
+        - не переводим в ч/б;
+        - не выбираем отдельный цветовой канал;
+        - не делаем бинаризацию;
+        - не удаляем фон;
+        - не портим мелкие детали.
 
-        if preprocess_mode == "otsu_2x":
-            return self._preprocess_otsu_2x(img_rgb)
-
-        if preprocess_mode == "adaptive_3x":
-            return self._preprocess_adaptive_3x(img_rgb)
-
-        logger.warning(
-            "Неизвестный режим предобработки '%s'. Используется otsu_2x.",
-            preprocess_mode
-        )
-        return self._preprocess_otsu_2x(img_rgb)
-
-    def _preprocess_otsu_2x(self, img_rgb: np.ndarray) -> np.ndarray:
-        """
-        Предобработка, похожая на старую:
-        - grayscale;
-        - увеличение x2;
-        - бинаризация Оцу.
+        Только:
+        - при необходимости увеличиваем crop;
+        - добавляем белую рамку вокруг текста.
         """
 
-        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        if img_rgb is None:
+            raise ValueError("Изображение не передано в предобработку.")
 
-        height, width = gray.shape[:2]
+        if len(img_rgb.shape) == 2:
+            img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_GRAY2RGB)
 
-        scaled = cv2.resize(
-            gray,
-            (width * 2, height * 2),
-            interpolation=cv2.INTER_CUBIC
+        img_rgb = img_rgb.astype(np.uint8)
+
+        resized = self._resize_rgb_for_ocr(img_rgb)
+        prepared = self._add_white_border_rgb(resized)
+
+        logger.info(
+            "OCR preprocessing done. input_size=%s, output_size=%s",
+            img_rgb.shape[:2][::-1],
+            prepared.shape[:2][::-1]
         )
 
-        _, binarized = cv2.threshold(
-            scaled,
-            0,
-            255,
-            cv2.THRESH_BINARY + cv2.THRESH_OTSU
-        )
+        return prepared
 
-        return binarized
-
-    def _preprocess_adaptive_3x(self, img_rgb: np.ndarray) -> np.ndarray:
+    def _resize_rgb_for_ocr(self, img_rgb: np.ndarray) -> np.ndarray:
         """
-        Режим для мелкого текста и упаковок:
-        - grayscale;
-        - увеличение x3;
-        - лёгкое размытие;
-        - адаптивная бинаризация.
+        Увеличивает изображение для OCR.
 
-        Часто лучше работает, когда фон неравномерный.
+        Исходник не уменьшаем никогда.
+        Для мелких цифр и спецсимволов лучше дать Tesseract
+        более крупное изображение.
         """
 
-        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        height, width = img_rgb.shape[:2]
 
-        height, width = gray.shape[:2]
+        if width < 1800 or height < 350:
+            scale = 4
+        elif height < 1000:
+            scale = 3
+        else:
+            scale = 2
 
-        scaled = cv2.resize(
-            gray,
-            (width * 3, height * 3),
-            interpolation=cv2.INTER_CUBIC
+        logger.info(
+            "OCR RGB resize. original=%sx%s, scale=%s",
+            width,
+            height,
+            scale
         )
 
-        blurred = cv2.GaussianBlur(scaled, (3, 3), 0)
-
-        processed = cv2.adaptiveThreshold(
-            blurred,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            31,
-            11
+        return cv2.resize(
+            img_rgb,
+            (width * scale, height * scale),
+            interpolation=cv2.INTER_LANCZOS4
         )
 
-        return processed
+    def _add_white_border_rgb(self, img_rgb: np.ndarray) -> np.ndarray:
+        """
+        Добавляет белую рамку вокруг crop.
+
+        Это помогает, если пользователь выделил область слишком близко к тексту.
+        """
+
+        return cv2.copyMakeBorder(
+            img_rgb,
+            40,
+            40,
+            40,
+            40,
+            cv2.BORDER_CONSTANT,
+            value=(255, 255, 255)
+        )
+
+    # =========================================================
+    # ПОСТОБРАБОТКА ТЕКСТА
+    # =========================================================
+
+    def _postprocess_text(self, text: str) -> str:
+        """
+        Аккуратная постобработка OCR-результата.
+
+        Не переписываем смысл.
+        Только нормализуем технические символы.
+        """
+
+        if not text:
+            return ""
+
+        text = text.replace("\r\n", "\n")
+        text = text.replace("\r", "\n")
+
+        text = self._normalize_special_symbols(text)
+        text = self._normalize_digit_confusions_in_numeric_context(text)
+        text = self._normalize_numeric_separators(text)
+        text = self._normalize_temperature_text(text)
+        text = self._normalize_number_sign(text)
+        text = self._cleanup_spaces(text)
+
+        return text.strip()
+
+    def _normalize_special_symbols(self, text: str) -> str:
+        """
+        Нормализует похожие спецсимволы.
+        """
+
+        replacements = {
+            "˚": "°",
+            "º": "°",
+            "℃": "°C",
+            "℉": "°F",
+
+            "−": "-",
+            "–": "-",
+            "—": "-",
+
+            # Буллеты и похожие маркеры.
+            "•": "●",
+            "·": "●",
+            "∙": "●",
+            "○": "●",
+            "▪": "●",
+            "■": "●",
+        }
+
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+        return text
+
+    def _normalize_digit_confusions_in_numeric_context(self, text: str) -> str:
+        """
+        Исправляет похожие на цифры буквы только рядом с цифрами
+        или числовыми разделителями.
+
+        Это нужно для дат, процентов, телефонов, температур,
+        веса, объёма и диапазонов.
+
+        Не исправляем такие символы во всех словах подряд,
+        чтобы не портить обычный текст.
+        """
+
+        replacements = {
+            "O": "0",
+            "o": "0",
+            "О": "0",
+            "о": "0",
+
+            "I": "1",
+            "l": "1",
+            "|": "1",
+
+            "З": "3",
+            "з": "3",
+
+            "S": "5",
+            "s": "5",
+
+            "Б": "6",
+            "б": "6",
+        }
+
+        numeric_context_chars = set(
+            "0123456789"
+            ".,:;/%+-"
+            "()[]{}"
+        )
+
+        chars = list(text)
+
+        for index, char in enumerate(chars):
+            if char not in replacements:
+                continue
+
+            left_char = self._get_nearest_non_space_char(
+                chars=chars,
+                start_index=index,
+                direction=-1
+            )
+
+            right_char = self._get_nearest_non_space_char(
+                chars=chars,
+                start_index=index,
+                direction=1
+            )
+
+            left_is_numeric_context = (
+                    left_char is not None
+                    and (
+                            left_char.isdigit()
+                            or left_char in numeric_context_chars
+                    )
+            )
+
+            right_is_numeric_context = (
+                    right_char is not None
+                    and (
+                            right_char.isdigit()
+                            or right_char in numeric_context_chars
+                    )
+            )
+
+            if left_is_numeric_context or right_is_numeric_context:
+                chars[index] = replacements[char]
+
+        fixed_text = "".join(chars)
+
+        # Частный, но важный случай:
+        # Tesseract часто распознаёт "3 кг" как "З кг".
+        fixed_text = re.sub(
+            r"\b[Зз]\s*(?=(кг|г|мг|л|мл|шт|%)\b)",
+            "3 ",
+            fixed_text,
+            flags=re.IGNORECASE
+        )
+
+        return fixed_text
+
+    def _get_nearest_non_space_char(
+            self,
+            chars: list[str],
+            start_index: int,
+            direction: int
+    ) -> str | None:
+        """
+        Ищет ближайший непробельный символ слева или справа.
+        """
+
+        index = start_index + direction
+
+        while 0 <= index < len(chars):
+            if not chars[index].isspace():
+                return chars[index]
+
+            index += direction
+
+        return None
+
+    def _normalize_numeric_separators(self, text: str) -> str:
+        """
+        Убирает лишние пробелы вокруг точек и запятых между цифрами.
+
+        Например:
+            24 . 06 . 2026 -> 24.06.2026
+            1 , 5 -> 1,5
+        """
+
+        return re.sub(
+            r"(\d)\s*([.,])\s*(\d)",
+            r"\1\2\3",
+            text
+        )
+
+    def _normalize_temperature_text(self, text: str) -> str:
+        """
+        Исправляет частую потерю знака градуса.
+
+        Например:
+            30 C
+            30 С
+            30 oC
+            30 0C
+
+        превращаем в:
+            30°C
+        """
+
+        return re.sub(
+            r"(\d+(?:[.,]\d+)?)\s*(?:°|o|O|о|О|0)?\s*([cCсС])\b",
+            r"\1°C",
+            text
+        )
+
+    def _normalize_number_sign(self, text: str) -> str:
+        """
+        Нормализует знак номера.
+        """
+
+        text = re.sub(
+            r"\bN\s*[°º]\s*",
+            "№ ",
+            text
+        )
+
+        text = re.sub(
+            r"№\s*",
+            "№ ",
+            text
+        )
+
+        return text
+
+    def _cleanup_spaces(self, text: str) -> str:
+        """
+        Чистит лишние пробелы, не ломая переносы строк.
+        """
+
+        lines = []
+
+        for line in text.split("\n"):
+            line = re.sub(r"[ \t]{2,}", " ", line)
+            lines.append(line.rstrip())
+
+        text = "\n".join(lines)
+
+        text = re.sub(
+            r"\n{3,}",
+            "\n\n",
+            text
+        )
+
+        return text
 
     # =========================================================
     # СОВМЕСТИМОСТЬ СО СТАРЫМ preprocess_image
@@ -256,12 +484,12 @@ class OCRService:
     def preprocess_numpy_image(
         self,
         image: np.ndarray,
-        mode: str = "default"
+        mode: str = "unified"
     ) -> np.ndarray:
         """
         Метод для совместимости со старым preprocess_image(img).
 
-        Старый код передавал изображение OpenCV-формата BGR.
+        mode больше не используется.
         """
 
         if image is None:
@@ -272,12 +500,4 @@ class OCRService:
         else:
             img_rgb = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2RGB)
 
-        if mode not in self.MODE_CONFIGS:
-            mode = "default"
-
-        preprocess_mode = self.MODE_CONFIGS[mode]["preprocess"]
-
-        return self._preprocess_rgb_image(
-            img_rgb=img_rgb,
-            preprocess_mode=preprocess_mode
-        )
+        return self._preprocess_packaging_text(img_rgb)

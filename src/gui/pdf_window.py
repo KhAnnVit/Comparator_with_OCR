@@ -1,7 +1,7 @@
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, Menu, messagebox
-
+from pathlib import Path
 from PIL import Image, ImageTk
 
 from config import POPPLER_PATH, OCR_LANGUAGES
@@ -12,7 +12,8 @@ from src.services.ocr_service import OCRService
 from src.services.image_crop_service import ImageCropService
 from src.services.pdf_service import PDFService
 from src.utils.logger import logger
-
+from src.models.image_file_models import ImageFileLoadSettings
+from src.services.image_file_service import ImageFileService
 
 
 class PDFViewerFrame(ctk.CTkFrame):
@@ -43,15 +44,22 @@ class PDFViewerFrame(ctk.CTkFrame):
     DISPLAY_PDF_DPI = 150
     OCR_PDF_DPI = 300
 
-    DEFAULT_OCR_MODE = "Обычный"
+    IMAGE_DISPLAY_MAX_SIDE = 3500
 
-    OCR_MODE_MAP = {
-        "Обычный": "default",
-        "Мелкий текст": "small_text",
-        "Блок текста": "block",
-        "Состав": "composition",
-        "Без обработки": "raw",
+
+    SUPPORTED_PDF_EXTENSIONS = {".pdf"}
+
+    SUPPORTED_IMAGE_EXTENSIONS = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".jfif",
     }
+
 
     OCR_LANGUAGE_OPTIONS = {
         "Русский": "rus",
@@ -69,6 +77,7 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.ocr_service = OCRService()
         self.image_crop_service = ImageCropService()
         self.pdf_service = PDFService()
+        self.image_file_service = ImageFileService()
 
         self._init_state()
         self._configure_grid()
@@ -85,6 +94,8 @@ class PDFViewerFrame(ctk.CTkFrame):
         """
 
         self.pdf_path = None
+        self.current_file_path = None
+        self.current_file_type = None  # "pdf" или "image"
         self.current_page_index = 0
         self.page_count = 0
 
@@ -99,6 +110,13 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.rotated_image = None
         self.current_image = None
         self.tk_image = None
+
+        self.displayed_image_width = 0
+        self.displayed_image_height = 0
+
+        self.viewport_x = 0
+        self.viewport_y = 0
+        self.viewport_source_box = None
 
         self.zoom_factor = 1.0
         self.angle = 0
@@ -116,7 +134,6 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.start_x = 0
         self.start_y = 0
 
-        self.ocr_mode_var = tk.StringVar(value=self.DEFAULT_OCR_MODE)
         self.ocr_language_vars = {}
 
     def _configure_grid(self):
@@ -146,8 +163,8 @@ class PDFViewerFrame(ctk.CTkFrame):
 
         self.btn_load = ctk.CTkButton(
             self.top_panel,
-            text="Загрузить PDF",
-            command=self.load_pdf,
+            text="Загрузить файл",
+            command=self.load_file,
             width=130
         )
         self.btn_load.pack(side="left", padx=5, pady=5)
@@ -211,9 +228,10 @@ class PDFViewerFrame(ctk.CTkFrame):
 
     def _create_ocr_panel(self):
         """
-        Создаёт панель OCR-настроек:
-        - режим распознавания;
-        - список языков с галочками.
+        Создаёт панель OCR-настроек.
+
+        Режим OCR теперь один.
+        Пользователь выбирает только языки распознавания.
         """
 
         self.ocr_panel = ctk.CTkFrame(self, height=40)
@@ -225,19 +243,11 @@ class PDFViewerFrame(ctk.CTkFrame):
             pady=(0, 5)
         )
 
-        self.ocr_mode_label = ctk.CTkLabel(
+        self.ocr_info_label = ctk.CTkLabel(
             self.ocr_panel,
-            text="Режим OCR:"
+            text="OCR: мелкий текст упаковки"
         )
-        self.ocr_mode_label.pack(side="left", padx=(10, 5), pady=5)
-
-        self.ocr_mode_menu = ctk.CTkOptionMenu(
-            self.ocr_panel,
-            values=list(self.OCR_MODE_MAP.keys()),
-            variable=self.ocr_mode_var,
-            width=150
-        )
-        self.ocr_mode_menu.pack(side="left", padx=(0, 15), pady=5)
+        self.ocr_info_label.pack(side="left", padx=(10, 20), pady=5)
 
         self.ocr_language_label = ctk.CTkLabel(
             self.ocr_panel,
@@ -422,6 +432,57 @@ class PDFViewerFrame(ctk.CTkFrame):
     # =========================================================
     # ЗАГРУЗКА PDF
     # =========================================================
+    def load_file(self):
+        """
+        Открывает единый диалог выбора файла.
+
+        Дальше логика зависит от расширения:
+        - PDF открываем через PDFService;
+        - изображения открываем через ImageFileService.
+        """
+
+        file_path = filedialog.askopenfilename(
+            title="Выберите PDF или изображение",
+            filetypes=[
+                (
+                    "PDF и изображения",
+                    "*.pdf *.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.jfif"
+                ),
+                ("PDF Files", "*.pdf"),
+                ("Image Files", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.jfif"),
+                ("All Files", "*.*"),
+            ]
+        )
+
+        if not file_path:
+            return
+
+        suffix = Path(file_path).suffix.lower()
+
+        if suffix in self.SUPPORTED_PDF_EXTENSIONS:
+            self.load_pdf_page(
+                file_path=file_path,
+                page_index=0,
+                is_new_file=True
+            )
+            return
+
+        if suffix in self.SUPPORTED_IMAGE_EXTENSIONS:
+            self.load_image_file(file_path)
+            return
+
+        messagebox.showerror(
+            "Неподдерживаемый файл",
+            (
+                "Можно открыть только PDF или изображение.\n\n"
+                f"Выбранный файл: {file_path}"
+            )
+        )
+
+        logger.warning(
+            "Пользователь выбрал неподдерживаемый файл: %s",
+            file_path
+        )
 
     def load_pdf(self):
         """
@@ -441,6 +502,101 @@ class PDFViewerFrame(ctk.CTkFrame):
             page_index=0,
             is_new_file=True
         )
+
+    def load_image_file(self, file_path):
+        """
+        Загружает обычное изображение в тот же просмотрщик.
+        """
+
+        try:
+            self.set_status("Загрузка изображения...")
+            self.update_idletasks()
+
+            result = self._load_image_with_service(file_path)
+
+            if not result.success:
+                self._handle_image_load_error(result.error_message)
+                return
+
+            self._set_loaded_image(
+                file_path=result.file_path,
+                display_image=result.display_image,
+                ocr_image=result.ocr_image
+            )
+
+            logger.info(
+                "Изображение загружено в интерфейс. path=%s, display_size=%s, original_size=%s",
+                result.file_path,
+                result.display_size,
+                result.original_size
+            )
+
+        except Exception:
+            logger.exception("Ошибка при загрузке изображения в интерфейсе")
+
+            messagebox.showerror(
+                "Ошибка загрузки изображения",
+                "Не удалось загрузить изображение. Подробности в app.log."
+            )
+
+            self.set_status("Ошибка загрузки изображения.")
+
+    def _load_image_with_service(self, file_path):
+        """
+        Загружает изображение через ImageFileService.
+        """
+
+        settings = ImageFileLoadSettings(
+            max_display_side=self.IMAGE_DISPLAY_MAX_SIDE
+        )
+
+        return self.image_file_service.load_image(
+            image_path=file_path,
+            settings=settings
+        )
+
+    def _handle_image_load_error(self, error_message):
+        """
+        Показывает ошибку загрузки изображения.
+        """
+
+        logger.warning("Изображение не загружено: %s", error_message)
+
+        messagebox.showerror(
+            "Ошибка загрузки изображения",
+            f"Не удалось загрузить изображение.\n\n{error_message}"
+        )
+
+        self.set_status("Изображение не загружено.")
+
+    def _set_loaded_image(self, file_path, display_image, ocr_image):
+        """
+        Сохраняет изображение в состояние просмотрщика
+        и обновляет интерфейс.
+        """
+
+        self.current_file_path = file_path
+        self.current_file_type = "image"
+
+        # Для изображения PDF-путь не нужен.
+        self.pdf_path = None
+
+        # Лёгкая версия используется для просмотра.
+        self.original_image = display_image
+
+        # Полная версия используется для OCR-crop.
+        self.ocr_source_image = ocr_image
+
+        self.current_page_index = 0
+        self.page_count = 1
+
+        self._reset_view_state(fit_to_page=True)
+        self._reset_selection_state()
+
+        self.update_image()
+        self._update_page_controls()
+
+        self.set_status(f"Изображение загружено: {file_path}")
 
     def load_pdf_page(self, file_path=None, page_index=None, is_new_file=False):
         """
@@ -565,6 +721,9 @@ class PDFViewerFrame(ctk.CTkFrame):
         и обновляет интерфейс.
         """
 
+        self.current_file_path = file_path
+        self.current_file_type = "pdf"
+
         self.pdf_path = file_path
 
         # Лёгкая версия страницы используется для просмотра и зума.
@@ -621,6 +780,12 @@ class PDFViewerFrame(ctk.CTkFrame):
         Обновляет кнопки и подпись текущей страницы.
         """
 
+        if self.current_file_type == "image":
+            self.page_label.configure(text="Изображение")
+            self.btn_prev_page.configure(state="disabled")
+            self.btn_next_page.configure(state="disabled")
+            return
+
         if self.page_count <= 0:
             self.page_label.configure(text="Стр. - / -")
             self.btn_prev_page.configure(state="disabled")
@@ -650,6 +815,12 @@ class PDFViewerFrame(ctk.CTkFrame):
         Загружает предыдущую страницу PDF.
         """
 
+        if self.current_file_type != "pdf":
+            return
+
+        if self.pdf_path is None:
+            return
+
         if self.current_page_index <= 0:
             return
 
@@ -663,6 +834,12 @@ class PDFViewerFrame(ctk.CTkFrame):
         """
         Загружает следующую страницу PDF.
         """
+
+        if self.current_file_type != "pdf":
+            return
+
+        if self.pdf_path is None:
+            return
 
         if self.current_page_index >= self.page_count - 1:
             return
@@ -679,13 +856,10 @@ class PDFViewerFrame(ctk.CTkFrame):
 
     def update_image(self, fast: bool = False):
         """
-        Перерисовывает PDF на Canvas.
+        Перерисовывает изображение на Canvas.
 
-        fast=True:
-            используется быстрый resize для плавного зума.
-
-        fast=False:
-            используется качественный resize.
+        Теперь не масштабируем всю страницу целиком.
+        Рисуем только видимую область.
         """
 
         if self.original_image is None:
@@ -694,19 +868,71 @@ class PDFViewerFrame(ctk.CTkFrame):
         self._prepare_display_image(fast=fast)
         self._draw_current_image_on_canvas()
 
-        # После полной перерисовки старое выделение может стать некорректным.
+        # После перерисовки старое выделение может стать некорректным.
         self.rect_id = None
 
     def _prepare_display_image(self, fast: bool = False):
-        """Готовит изображение для отображения на Canvas."""
+        """
+        Готовит изображение для отображения на Canvas.
+
+        Вместо resize всей страницы делаем так:
+        - считаем полный размер изображения при текущем zoom;
+        - определяем, какая часть изображения сейчас видна на Canvas;
+        - вырезаем только эту область из original_image;
+        - масштабируем только её до размера Canvas-viewport.
+        """
 
         self.rotated_image = self.original_image.rotate(
             self.angle,
             expand=True
         )
 
-        new_width = max(1, int(self.rotated_image.width * self.zoom_factor))
-        new_height = max(1, int(self.rotated_image.height * self.zoom_factor))
+        self.displayed_image_width = max(
+            1,
+            int(self.rotated_image.width * self.zoom_factor)
+        )
+        self.displayed_image_height = max(
+            1,
+            int(self.rotated_image.height * self.zoom_factor)
+        )
+
+        canvas_width = max(1, self.canvas.winfo_width())
+        canvas_height = max(1, self.canvas.winfo_height())
+
+        center_x, center_y = self._get_image_center_on_canvas()
+
+        image_left = center_x - self.displayed_image_width / 2
+        image_top = center_y - self.displayed_image_height / 2
+        image_right = image_left + self.displayed_image_width
+        image_bottom = image_top + self.displayed_image_height
+
+        visible_left = max(0, image_left)
+        visible_top = max(0, image_top)
+        visible_right = min(canvas_width, image_right)
+        visible_bottom = min(canvas_height, image_bottom)
+
+        if visible_right <= visible_left or visible_bottom <= visible_top:
+            self.current_image = None
+            self.tk_image = None
+            self.viewport_source_box = None
+            return
+
+        source_left = (visible_left - image_left) / self.zoom_factor
+        source_top = (visible_top - image_top) / self.zoom_factor
+        source_right = (visible_right - image_left) / self.zoom_factor
+        source_bottom = (visible_bottom - image_top) / self.zoom_factor
+
+        source_box = (
+            max(0, int(source_left)),
+            max(0, int(source_top)),
+            min(self.rotated_image.width, int(source_right) + 1),
+            min(self.rotated_image.height, int(source_bottom) + 1)
+        )
+
+        viewport_image = self.rotated_image.crop(source_box)
+
+        target_width = max(1, int(visible_right - visible_left))
+        target_height = max(1, int(visible_bottom - visible_top))
 
         resample_filter = (
             self.FAST_ZOOM_RESAMPLE
@@ -714,24 +940,44 @@ class PDFViewerFrame(ctk.CTkFrame):
             else self.QUALITY_RESAMPLE
         )
 
-        self.current_image = self.rotated_image.resize(
-            (new_width, new_height),
+        self.current_image = viewport_image.resize(
+            (target_width, target_height),
             resample=resample_filter
         )
 
         self.tk_image = ImageTk.PhotoImage(self.current_image)
 
+        self.viewport_x = int(visible_left)
+        self.viewport_y = int(visible_top)
+        self.viewport_source_box = source_box
+
+        logger.debug(
+            (
+                "Viewport rendered. zoom=%s, full_display=%sx%s, "
+                "viewport=%sx%s, source_box=%s"
+            ),
+            round(self.zoom_factor, 3),
+            self.displayed_image_width,
+            self.displayed_image_height,
+            target_width,
+            target_height,
+            source_box
+        )
+
     def _draw_current_image_on_canvas(self):
-        """Рисует текущее изображение на Canvas."""
+        """
+        Рисует текущий viewport на Canvas.
+        """
 
         self.canvas.delete("all")
 
-        center_x, center_y = self._get_image_center_on_canvas()
+        if self.tk_image is None:
+            return
 
         self.canvas.create_image(
-            center_x,
-            center_y,
-            anchor="center",
+            self.viewport_x,
+            self.viewport_y,
+            anchor="nw",
             image=self.tk_image,
             tags="image"
         )
@@ -902,7 +1148,9 @@ class PDFViewerFrame(ctk.CTkFrame):
             self._drag_selection(event)
 
     def _drag_pan(self, event):
-        """Перемещает изображение по Canvas."""
+        """
+        Перемещает изображение по Canvas.
+        """
 
         dx = event.x - self.last_mouse_x
         dy = event.y - self.last_mouse_y
@@ -913,7 +1161,7 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.offset_x += dx
         self.offset_y += dy
 
-        self.canvas.move("all", dx, dy)
+        self.update_image(fast=True)
 
     def _drag_selection(self, event):
         """Изменяет размер рамки выделения."""
@@ -995,16 +1243,12 @@ class PDFViewerFrame(ctk.CTkFrame):
                 selection_coords=selection_coords,
                 canvas_width=max(1, self.canvas.winfo_width()),
                 canvas_height=max(1, self.canvas.winfo_height()),
-                displayed_image_width=self.current_image.width,
-                displayed_image_height=self.current_image.height,
+                displayed_image_width=self.displayed_image_width,
+                displayed_image_height=self.displayed_image_height,
                 offset_x=self.offset_x,
                 offset_y=self.offset_y,
                 zoom_factor=self.zoom_factor,
                 angle=self.angle,
-
-                # Важно:
-                # сначала нам нужен crop_box в координатах display-картинки,
-                # поэтому пока не разворачиваем обратно.
                 restore_original_orientation=False
             )
 
@@ -1037,14 +1281,19 @@ class PDFViewerFrame(ctk.CTkFrame):
 
     def _crop_from_ocr_source(self, display_crop_box):
         """
-        Пересчитывает crop_box с display-страницы на OCR-страницу
+        Пересчитывает crop_box с display-изображения на OCR-изображение
         и вырезает область из OCR-источника.
+
+        Важно:
+        если пользователь повернул изображение на экране,
+        в OCR должна уйти область в той же ориентации, которую видит пользователь.
+        Поэтому после crop НЕ разворачиваем фрагмент обратно.
         """
 
         if self.ocr_source_image is None or self.rotated_image is None:
             return None
 
-        # Поворачиваем OCR-источник так же, как display-страницу.
+        # Поворачиваем OCR-источник так же, как изображение на экране.
         ocr_rotated_image = self.ocr_source_image.rotate(
             self.angle,
             expand=True
@@ -1067,14 +1316,49 @@ class PDFViewerFrame(ctk.CTkFrame):
 
         cropped_image = ocr_rotated_image.crop(ocr_crop_box)
 
-        # Возвращаем фрагмент в исходную ориентацию,
-        # как и раньше.
-        cropped_image = cropped_image.rotate(
-            -self.angle,
-            expand=True
+        logger.info(
+            (
+                "OCR crop source check. "
+                "angle=%s, display_rotated_size=%s, ocr_rotated_size=%s, "
+                "display_crop_box=%s, ocr_crop_box=%s, "
+                "scale_x=%.3f, scale_y=%.3f, cropped_size=%s"
+            ),
+            self.angle,
+            self.rotated_image.size,
+            ocr_rotated_image.size,
+            display_crop_box,
+            ocr_crop_box,
+            scale_x,
+            scale_y,
+            cropped_image.size
         )
 
         return cropped_image
+
+    def _save_debug_ocr_image(self, image, prefix):
+        """
+        Временно сохраняет изображение, которое отправляется в OCR.
+
+        Нужно для проверки:
+        OCR получает оригинальный crop или сжатую display-версию.
+        """
+
+        try:
+            debug_dir = Path("data/processed/ocr_debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+
+            file_path = debug_dir / f"{prefix}.png"
+
+            image.save(file_path)
+
+            logger.info(
+                "DEBUG OCR image saved: %s, size=%s",
+                file_path,
+                image.size
+            )
+
+        except Exception:
+            logger.exception("Не удалось сохранить debug OCR image")
 
     def _can_crop(self) -> bool:
         """
@@ -1085,24 +1369,16 @@ class PDFViewerFrame(ctk.CTkFrame):
                 self.rect_id is not None
                 and self.original_image is not None
                 and self.ocr_source_image is not None
-                and self.current_image is not None
                 and self.rotated_image is not None
+                and self.displayed_image_width > 0
+                and self.displayed_image_height > 0
         )
 
     # =========================================================
     # OCR
     # =========================================================
 
-    def get_selected_ocr_mode(self):
-        """
-        Возвращает внутренний OCR-режим.
 
-        Например:
-            "Мелкий текст" -> "small_text"
-        """
-
-        visible_mode = self.ocr_mode_var.get()
-        return self.OCR_MODE_MAP.get(visible_mode, "default")
 
     def _get_default_ocr_language_codes(self) -> set[str]:
         """
@@ -1144,7 +1420,6 @@ class PDFViewerFrame(ctk.CTkFrame):
 
         return "+".join(selected_codes)
 
-
     def send_to_ocr(self):
         """
         Вырезает выделенную область, запускает OCR
@@ -1161,8 +1436,6 @@ class PDFViewerFrame(ctk.CTkFrame):
             logger.warning("OCR не запущен: не удалось вырезать выделенную область")
             return
 
-        selected_mode = self.get_selected_ocr_mode()
-        visible_mode = self.ocr_mode_var.get()
         selected_languages = self.get_selected_ocr_languages()
 
         if not selected_languages:
@@ -1172,35 +1445,33 @@ class PDFViewerFrame(ctk.CTkFrame):
             )
             logger.warning("OCR не запущен: не выбран ни один язык")
             return
+
         try:
             self._set_wait_cursor(True)
 
             result = self._recognize_cropped_image(
                 cropped_image=cropped_image,
-                selected_mode=selected_mode,
-                visible_mode=visible_mode,
                 selected_languages=selected_languages
             )
 
             if not result.success:
-                self._handle_ocr_error(result, visible_mode)
+                self._handle_ocr_error(result)
                 return
 
             self._send_ocr_result_to_controller(
                 cropped_image=cropped_image,
                 recognized_text=result.text,
-                selected_mode=selected_mode,
                 selected_languages=selected_languages
             )
 
             logger.info(
-                "OCR успешно завершён. mode=%s, text_length=%s",
-                selected_mode,
+                "OCR успешно завершён. languages=%s, text_length=%s",
+                selected_languages,
                 len(result.text)
             )
 
         except Exception:
-            logger.exception("Ошибка при OCR из PDF")
+            logger.exception("Ошибка при OCR")
             messagebox.showerror(
                 "Ошибка OCR",
                 "Произошла ошибка во время распознавания текста. Подробности в app.log."
@@ -1212,16 +1483,12 @@ class PDFViewerFrame(ctk.CTkFrame):
     def _recognize_cropped_image(
             self,
             cropped_image,
-            selected_mode,
-            visible_mode,
             selected_languages
     ):
         """Запускает OCRService для выделенной области."""
 
         logger.info(
-            "Запущено OCR из PDF. mode=%s, visible_mode=%s, languages=%s, image_size=%s",
-            selected_mode,
-            visible_mode,
+            "Запущено OCR. languages=%s, image_size=%s",
             selected_languages,
             cropped_image.size
         )
@@ -1229,17 +1496,15 @@ class PDFViewerFrame(ctk.CTkFrame):
         return self.ocr_service.recognize_from_pil(
             pil_image=cropped_image,
             settings=OCRSettings(
-                mode=selected_mode,
                 languages=selected_languages
             )
         )
 
-    def _handle_ocr_error(self, result, visible_mode):
+    def _handle_ocr_error(self, result):
         """Обрабатывает ошибку OCR."""
 
         logger.error(
-            "OCR завершился ошибкой. mode=%s, error=%s",
-            result.mode,
+            "OCR завершился ошибкой. error=%s",
             result.error_message
         )
 
@@ -1247,7 +1512,6 @@ class PDFViewerFrame(ctk.CTkFrame):
             "Ошибка OCR",
             (
                 "Не удалось распознать текст.\n\n"
-                f"Режим: {visible_mode}\n"
                 f"Ошибка: {result.error_message}"
             )
         )
@@ -1256,7 +1520,6 @@ class PDFViewerFrame(ctk.CTkFrame):
             self,
             cropped_image,
             recognized_text,
-            selected_mode,
             selected_languages
     ):
         """Передаёт OCR-результат в AppController."""
@@ -1269,17 +1532,28 @@ class PDFViewerFrame(ctk.CTkFrame):
             )
             return
 
+        source_type = (
+            "image_selection"
+            if self.current_file_type == "image"
+            else "pdf_selection"
+        )
+
         self.master.controller.show_ocr_result(
             image=cropped_image,
             text=recognized_text,
-            source=f"pdf_selection:{selected_mode}:{selected_languages}"
+            source=f"{source_type}:ocr:{selected_languages}"
         )
 
     def _set_wait_cursor(self, enabled: bool):
-        """Включает или выключает курсор ожидания."""
+        """
+        Включает или выключает курсор ожидания на время долгой операции.
+        """
 
         if enabled:
             self.configure(cursor="watch")
+            self.canvas.configure(cursor="watch")
             self.update_idletasks()
         else:
             self.configure(cursor="")
+            self.canvas.configure(cursor="")
+            self.update_idletasks()
