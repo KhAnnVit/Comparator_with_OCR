@@ -2,18 +2,20 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import Menu, messagebox
 
-from PIL import Image
+from PIL import Image, ImageTk
 
 from src.utils.logger import logger
 
 
 class OCRViewerFrame(ctk.CTkFrame):
     """
-    Второй раздел приложения: просмотр результата OCR.
+    Второй раздел приложения: просмотр результатов OCR.
 
     Что делает:
+    - каждый новый OCR-результат открывает в отдельной вкладке;
     - показывает вырезанный фрагмент изображения;
     - показывает распознанный текст;
+    - сохраняет ручные правки текста при переключении вкладок;
     - позволяет отправить весь текст в поле сравнения;
     - позволяет отправить выделенный фрагмент текста в поле сравнения.
     """
@@ -27,7 +29,12 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self.current_image = None
         self.current_ctk_image = None
+        self.current_photo_image = None
         self.current_text = ""
+
+        self.ocr_tabs = {}
+        self.active_ocr_tab_id = None
+        self.next_ocr_tab_id = 1
 
         self._configure_grid()
         self._create_widgets()
@@ -41,7 +48,7 @@ class OCRViewerFrame(ctk.CTkFrame):
     def _configure_grid(self):
         """Настраивает сетку OCR-раздела."""
 
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
     # =========================================================
@@ -51,30 +58,50 @@ class OCRViewerFrame(ctk.CTkFrame):
     def _create_widgets(self):
         """Создаёт все элементы интерфейса."""
 
+        self._create_tabs_panel()
         self._create_image_panel()
         self._create_textbox()
         self._create_bottom_panel()
+
+    def _create_tabs_panel(self):
+        """Создаёт панель вкладок OCR-результатов."""
+
+        self.tabs_panel = ctk.CTkScrollableFrame(
+            self,
+            height=44,
+            orientation="horizontal"
+        )
+        self.tabs_panel.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(10, 0)
+        )
+
+        self._refresh_ocr_tabs_panel()
 
     def _create_image_panel(self):
         """Создаёт верхнюю панель с превью изображения."""
 
         self.image_panel = ctk.CTkFrame(self, height=150)
         self.image_panel.grid(
-            row=0,
+            row=1,
             column=0,
             sticky="ew",
             padx=10,
-            pady=(10, 5)
+            pady=(5, 5)
         )
 
-        # Не даём фрейму сжиматься по содержимому.
         self.image_panel.pack_propagate(False)
 
-        self.lbl_image = ctk.CTkLabel(
+        self.lbl_image = tk.Label(
             self.image_panel,
-            text=self.DEFAULT_IMAGE_TEXT
+            text=self.DEFAULT_IMAGE_TEXT,
+            bg="#2b2b2b",
+            fg="white"
         )
-        self.lbl_image.pack(expand=True)
+        self.lbl_image.pack(expand=True, fill="both")
 
     def _create_textbox(self):
         """Создаёт поле с распознанным текстом."""
@@ -85,7 +112,7 @@ class OCRViewerFrame(ctk.CTkFrame):
             font=ctk.CTkFont(size=14)
         )
         self.textbox.grid(
-            row=1,
+            row=2,
             column=0,
             sticky="nsew",
             padx=10,
@@ -99,7 +126,7 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self.bottom_panel = ctk.CTkFrame(self)
         self.bottom_panel.grid(
-            row=2,
+            row=3,
             column=0,
             sticky="ew",
             padx=10,
@@ -158,6 +185,9 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self.textbox.bind("<Button-3>", self.show_context_menu)
 
+        # Сохраняем ручные правки текста, когда пользователь печатает.
+        self.textbox.bind("<KeyRelease>", self._on_text_changed)
+
     def show_context_menu(self, event):
         """
         Показывает контекстное меню только если есть выделенный текст.
@@ -179,66 +209,260 @@ class OCRViewerFrame(ctk.CTkFrame):
         except tk.TclError:
             return False
 
+    def _on_text_changed(self, event=None):
+        """
+        Сохраняет изменения текста в активную OCR-вкладку.
+        """
+
+        self._save_current_ocr_tab()
+
     # =========================================================
     # ОБНОВЛЕНИЕ СОДЕРЖИМОГО
     # =========================================================
 
     def update_content(self, pil_image, text):
         """
-        Обновляет OCR-раздел после распознавания.
+        Создаёт новую OCR-вкладку после распознавания.
 
         Этот метод вызывается через AppController.
         """
 
-        self.current_image = pil_image
-        self.current_text = text or ""
+        tab_id = self._create_ocr_tab(
+            pil_image=pil_image,
+            text=text or ""
+        )
 
-        self._show_image(pil_image)
-        self._set_text(self.current_text)
+        self._switch_ocr_tab(tab_id)
 
         logger.info(
-            "OCR-раздел обновлён. text_length=%s",
-            len(self.current_text)
+            "Создана новая OCR-вкладка. tab_id=%s, text_length=%s",
+            tab_id,
+            len(text or "")
         )
+
+    # =========================================================
+    # OCR-ВКЛАДКИ
+    # =========================================================
+
+    def _create_ocr_tab(self, pil_image, text):
+        """
+        Создаёт новую вкладку OCR.
+        """
+
+        tab_id = self.next_ocr_tab_id
+        self.next_ocr_tab_id += 1
+
+        title = f"OCR {tab_id}"
+
+        self.ocr_tabs[tab_id] = {
+            "title": title,
+            "image": pil_image,
+            "text": text or "",
+            "photo_image": None,
+        }
+
+        self._refresh_ocr_tabs_panel()
+
+        return tab_id
+
+    def _switch_ocr_tab(self, tab_id):
+        """
+        Переключается на выбранную OCR-вкладку.
+        """
+
+        if tab_id not in self.ocr_tabs:
+            logger.warning("OCR-вкладка не найдена: %s", tab_id)
+            return
+
+        self._save_current_ocr_tab()
+
+        self.active_ocr_tab_id = tab_id
+
+        tab_data = self.ocr_tabs[tab_id]
+
+        self.current_image = tab_data["image"]
+        self.current_text = tab_data["text"]
+
+        self._show_image(self.current_image)
+        self._set_text(self.current_text)
+
+        self._refresh_ocr_tabs_panel()
+
+        logger.info("Переключение на OCR-вкладку: %s", tab_id)
+
+    def _save_current_ocr_tab(self):
+        """
+        Сохраняет текущий текст во вкладку.
+
+        Нужно, если пользователь вручную поправил OCR-текст.
+        """
+
+        if self.active_ocr_tab_id is None:
+            return
+
+        if self.active_ocr_tab_id not in self.ocr_tabs:
+            return
+
+        self.ocr_tabs[self.active_ocr_tab_id]["text"] = self._get_full_text()
+        self.current_text = self.ocr_tabs[self.active_ocr_tab_id]["text"]
+
+    def _close_ocr_tab(self, tab_id):
+        """
+        Закрывает OCR-вкладку.
+        """
+
+        if tab_id not in self.ocr_tabs:
+            return
+
+        was_active = tab_id == self.active_ocr_tab_id
+
+        del self.ocr_tabs[tab_id]
+
+        if not self.ocr_tabs:
+            self._reset_after_all_tabs_closed()
+            return
+
+        if was_active:
+            new_tab_id = self._get_last_ocr_tab_id()
+            self._switch_ocr_tab(new_tab_id)
+        else:
+            self._refresh_ocr_tabs_panel()
+
+        logger.info("OCR-вкладка закрыта: %s", tab_id)
+
+    def _get_last_ocr_tab_id(self):
+        """
+        Возвращает последнюю открытую OCR-вкладку.
+        """
+
+        if not self.ocr_tabs:
+            return None
+
+        return list(self.ocr_tabs.keys())[-1]
+
+    def _reset_after_all_tabs_closed(self):
+        """
+        Сбрасывает OCR-раздел, если закрыты все вкладки.
+        """
+
+        self.active_ocr_tab_id = None
+
+        self.current_image = None
+        self.current_photo_image = None
+        self.current_text = ""
+
+        self.lbl_image.configure(
+            image="",
+            text=self.DEFAULT_IMAGE_TEXT
+        )
+        self.lbl_image.image = None
+
+        self._set_text(self.DEFAULT_TEXT)
+        self._refresh_ocr_tabs_panel()
+
+        logger.info("Все OCR-вкладки закрыты")
+
+    def _refresh_ocr_tabs_panel(self):
+        """
+        Перерисовывает панель OCR-вкладок.
+        """
+
+        for widget in self.tabs_panel.winfo_children():
+            widget.destroy()
+
+        if not self.ocr_tabs:
+            label = ctk.CTkLabel(
+                self.tabs_panel,
+                text="OCR-вкладок пока нет"
+            )
+            label.pack(side="left", padx=10, pady=5)
+            return
+
+        for tab_id, tab_data in self.ocr_tabs.items():
+            tab_frame = ctk.CTkFrame(self.tabs_panel)
+            tab_frame.pack(side="left", padx=3, pady=4)
+
+            title = tab_data["title"]
+
+            if tab_id == self.active_ocr_tab_id:
+                title = f"● {title}"
+
+            btn_tab = ctk.CTkButton(
+                tab_frame,
+                text=title,
+                width=95,
+                height=26,
+                command=lambda current_tab_id=tab_id: self._switch_ocr_tab(
+                    current_tab_id
+                )
+            )
+            btn_tab.pack(side="left", padx=(3, 1), pady=3)
+
+            btn_close = ctk.CTkButton(
+                tab_frame,
+                text="×",
+                width=26,
+                height=26,
+                command=lambda current_tab_id=tab_id: self._close_ocr_tab(
+                    current_tab_id
+                )
+            )
+            btn_close.pack(side="left", padx=(1, 3), pady=3)
+
+    # =========================================================
+    # ИЗОБРАЖЕНИЕ
+    # =========================================================
 
     def _show_image(self, pil_image):
         """
         Показывает превью вырезанного изображения.
+
+        Используем обычный tk.Label + ImageTk.PhotoImage,
+        потому что CTkImage иногда даёт TclError:
+        image "pyimage..." doesn't exist при частом создании/закрытии вкладок.
         """
 
         if pil_image is None:
+            self.current_photo_image = None
+            self.current_ctk_image = None
+
             self.lbl_image.configure(
-                image=None,
+                image="",
                 text=self.DEFAULT_IMAGE_TEXT
             )
-            self.current_ctk_image = None
+            self.lbl_image.image = None
             return
 
         try:
             preview_image = self._prepare_preview_image(pil_image)
 
-            ctk_image = ctk.CTkImage(
-                light_image=preview_image,
-                dark_image=preview_image,
-                size=(preview_image.width, preview_image.height)
-            )
+            photo_image = ImageTk.PhotoImage(preview_image)
+
+            self.current_photo_image = photo_image
+            self.current_ctk_image = None
 
             self.lbl_image.configure(
-                image=ctk_image,
+                image=photo_image,
                 text=""
             )
 
-            # Важно сохранить ссылку, иначе изображение может исчезнуть.
-            self.current_ctk_image = ctk_image
-            self.lbl_image.image = ctk_image
+            # Важно сохранить ссылку, иначе Tkinter удалит изображение.
+            self.lbl_image.image = photo_image
+
+            if self.active_ocr_tab_id in self.ocr_tabs:
+                self.ocr_tabs[self.active_ocr_tab_id]["photo_image"] = photo_image
 
         except Exception:
             logger.exception("Ошибка при отображении OCR-изображения")
+
+            self.current_photo_image = None
+            self.current_ctk_image = None
+
             self.lbl_image.configure(
-                image=None,
+                image="",
                 text="Не удалось показать изображение"
             )
-            self.current_ctk_image = None
+            self.lbl_image.image = None
 
     def _prepare_preview_image(self, pil_image):
         """
@@ -252,7 +476,7 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         if preview_image.height > self.PREVIEW_MAX_HEIGHT:
             ratio = self.PREVIEW_MAX_HEIGHT / preview_image.height
-            new_width = int(preview_image.width * ratio)
+            new_width = max(1, int(preview_image.width * ratio))
 
             preview_image = preview_image.resize(
                 (new_width, self.PREVIEW_MAX_HEIGHT),
@@ -260,6 +484,10 @@ class OCRViewerFrame(ctk.CTkFrame):
             )
 
         return preview_image
+
+    # =========================================================
+    # ТЕКСТ
+    # =========================================================
 
     def _set_text(self, text):
         """Устанавливает текст в OCR-поле."""
@@ -312,6 +540,8 @@ class OCRViewerFrame(ctk.CTkFrame):
             1 — левое поле сравнения
             2 — правое поле сравнения
         """
+
+        self._save_current_ocr_tab()
 
         full_text = self._get_full_text()
 
