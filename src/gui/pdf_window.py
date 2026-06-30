@@ -68,6 +68,9 @@ class PDFViewerFrame(ctk.CTkFrame):
         "English": "eng",
         "Қазақ": "kaz",
         "한국어": "kor",
+        "Español": "spa",
+        "Français": "fra",
+        "العربية": "ara",
     }
 
     MODE_PAN = "Перемещение"
