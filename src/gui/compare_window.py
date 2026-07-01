@@ -538,15 +538,14 @@ class CompareSection(ctk.CTkFrame):
             pass
 
     def select_all(self):
-        """
-        Выделяет весь текст в активном поле.
-        """
+        """Выделяет весь текст в активном поле."""
 
         if self.active_textbox is None:
             return
 
         self.active_textbox.focus_set()
         self.active_textbox.tag_add("sel", "1.0", "end")
+        self._raise_selection_tag(self.active_textbox)
 
     # =========================================================
     # ПОДСВЕТКА
@@ -554,35 +553,123 @@ class CompareSection(ctk.CTkFrame):
 
     def _configure_text_tags(self):
         """
-        Настраивает теги подсветки.
+        Настраивает теги для подсветки совпадений и различий.
+
+        Важно:
+        системное выделение текста в tk.Text — это тег "sel".
+        Если теги подсветки оказываются выше него, пользователь не видит,
+        что именно выделил мышью. Поэтому "sel" всегда поднимаем наверх.
         """
 
         for textbox in (self.left_textbox, self.right_textbox):
+            self._configure_selection_style(textbox)
+
+            # Красный — различия.
             textbox.tag_configure(
                 "diff",
-                foreground="red",
-                background="#ffcccc"
+                foreground="#991b1b",
+                background="#fecaca"
             )
 
+            # Зелёный — совпадения.
             textbox.tag_configure(
                 "match",
-                foreground="green"
+                foreground="#166534",
+                background="#dcfce7"
+            )
+
+            # Жёлтый — потенциально найденный/похожий фрагмент.
+            # Этот тег может пригодиться, если в твоей версии есть поиск похожего блока.
+            textbox.tag_configure(
+                "similar",
+                foreground="#111827",
+                background="#fef08a"
             )
 
             textbox.tag_configure(
-                "block",
-                background="#fff2b2"
+                "search_match",
+                foreground="#111827",
+                background="#fef08a"
             )
 
+            self._raise_selection_tag(textbox)
+            self._bind_selection_visibility_events(textbox)
+
+    def _configure_selection_style(self, textbox):
+        """
+        Делает пользовательское выделение текста контрастным.
+
+        Работает поверх красной, зелёной и жёлтой подсветки.
+        """
+
+        try:
+            textbox.configure(
+                selectbackground="#2563eb",
+                selectforeground="#ffffff",
+                inactiveselectbackground="#1d4ed8"
+            )
+        except tk.TclError:
+            try:
+                textbox.configure(
+                    selectbackground="#2563eb",
+                    selectforeground="#ffffff"
+                )
+            except tk.TclError:
+                logger.debug(
+                    "Не удалось настроить цвет выделения текста",
+                    exc_info=True
+                )
+
+    def _raise_selection_tag(self, textbox):
+        """
+        Поднимает системный тег выделения 'sel' выше всех тегов подсветки.
+        """
+
+        try:
+            textbox.tag_raise("sel")
+        except tk.TclError:
+            pass
+
+    def _bind_selection_visibility_events(self, textbox):
+        """
+        Следит, чтобы выделение оставалось видимым после действий мышью и клавиатурой.
+        """
+
+        textbox.bind(
+            "<ButtonRelease-1>",
+            lambda event, tb=textbox: self._raise_selection_tag(tb),
+            add="+"
+        )
+
+        textbox.bind(
+            "<B1-Motion>",
+            lambda event, tb=textbox: tb.after_idle(
+                lambda: self._raise_selection_tag(tb)
+            ),
+            add="+"
+        )
+
+        textbox.bind(
+            "<KeyRelease>",
+            lambda event, tb=textbox: self._raise_selection_tag(tb),
+            add="+"
+        )
+
+        textbox.bind(
+            "<<Selection>>",
+            lambda event, tb=textbox: self._raise_selection_tag(tb),
+            add="+"
+        )
+
     def clear_highlights(self):
-        """
-        Удаляет подсветку.
-        """
+        """Удаляет подсветку из обоих текстовых полей."""
 
         for textbox in (self.left_textbox, self.right_textbox):
             textbox.tag_remove("diff", "1.0", "end")
             textbox.tag_remove("match", "1.0", "end")
-            textbox.tag_remove("block", "1.0", "end")
+            textbox.tag_remove("similar", "1.0", "end")
+            textbox.tag_remove("search_match", "1.0", "end")
+            self._raise_selection_tag(textbox)
 
         self.result_label.configure(text="Подсветка очищена.")
 
@@ -610,7 +697,17 @@ class CompareSection(ctk.CTkFrame):
         start_index = f"1.0+{start_char}c"
         end_index = f"1.0+{end_char}c"
 
-        textbox.tag_add(tag_name, start_index, end_index)
+        try:
+            textbox.tag_add(tag_name, start_index, end_index)
+            self._raise_selection_tag(textbox)
+        except tk.TclError:
+            logger.debug(
+                "Не удалось добавить тег подсветки. tag=%s, start=%s, end=%s",
+                tag_name,
+                start_index,
+                end_index,
+                exc_info=True
+            )
 
     def _add_tag_for_normalized_range(
             self,
