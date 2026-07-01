@@ -182,6 +182,14 @@ class ExcelViewerFrame(ctk.CTkFrame):
         )
         self.btn_append_selected_2.pack(side="left", padx=5, pady=5)
 
+        self.btn_clear_selection = ctk.CTkButton(
+            self.top_panel,
+            text="Сбросить выделение",
+            command=self.clear_selection,
+            width=150
+        )
+        self.btn_clear_selection.pack(side="left", padx=(20, 5), pady=5)
+
     def _create_table_container(self):
         """Создаёт контейнер для таблицы."""
 
@@ -231,9 +239,53 @@ class ExcelViewerFrame(ctk.CTkFrame):
         # - выделение строк/колонок;
         # - копирование;
         # - навигация.
-        self.sheet.enable_bindings("all")
+        self._enable_sheet_selection_bindings()
 
         self.after(100, self._setup_context_menu)
+
+    def _enable_sheet_selection_bindings(self):
+        """
+        Настраивает выделение в tksheet.
+
+        Что должно работать:
+        - обычный клик по ячейке;
+        - Ctrl + клик для выбора нескольких несоседних ячеек;
+        - протягивание мышью для выбора диапазона;
+        - выбор строк и колонок;
+        - правый клик;
+        - копирование.
+        """
+
+        try:
+            self.sheet.enable_bindings(
+                "single_select",
+                "drag_select",
+                "ctrl_select",
+                "shift_select",
+                "row_select",
+                "column_select",
+                "arrowkeys",
+                "right_click_popup_menu",
+                "rc_select",
+                "copy",
+                "select_all",
+                "column_width_resize",
+                "row_height_resize",
+                "double_click_column_resize",
+                "double_click_row_resize",
+            )
+
+            logger.debug("Excel selection bindings настроены через ctrl_select")
+
+        except Exception:
+            logger.exception(
+                "Не удалось включить расширенные Excel bindings. Используем all."
+            )
+
+            try:
+                self.sheet.enable_bindings("all")
+            except Exception:
+                logger.exception("Не удалось включить даже базовые bindings tksheet")
 
     def _bind_events(self):
         """Привязывает события таблицы."""
@@ -276,6 +328,10 @@ class ExcelViewerFrame(ctk.CTkFrame):
                 },
                 "➕ Добавить выделенные ячейки → Поле 2": {
                     "command": lambda: self.send_selected_cells(2, append=True)
+                },
+
+                "❌ Сбросить выделение": {
+                    "command": self.clear_selection
                 },
             }
 
@@ -462,6 +518,8 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.sheet.headers(headers)
         self.sheet.set_all_column_widths()
 
+        self._enable_sheet_selection_bindings()
+
         self.after(100, self._setup_context_menu)
 
     def _show_empty_table(self, header):
@@ -470,6 +528,9 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.sheet.set_sheet_data([[""]])
         self.sheet.headers([header])
         self.sheet.set_all_column_widths()
+
+        self._enable_sheet_selection_bindings()
+
         self.after(100, self._setup_context_menu)
 
     def _reset_current_cell(self):
@@ -794,6 +855,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
         coords = set()
 
         coords.update(self._get_selected_cells_directly())
+        coords.update(self._get_selected_cells_from_boxes())
         coords.update(self._get_selected_cells_from_rows())
         coords.update(self._get_selected_cells_from_columns())
 
@@ -892,6 +954,125 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         return coords
 
+    def _get_selected_cells_from_boxes(self) -> set[tuple[int, int]]:
+        """
+        Получает ячейки из прямоугольных областей выделения.
+
+        Это нужно для случаев, когда пользователь выделяет диапазон
+        протягиванием мыши, а get_selected_cells() возвращает пусто.
+        """
+
+        coords = set()
+
+        possible_method_names = [
+            "get_selection_boxes",
+            "get_selected_boxes",
+            "get_all_selection_boxes",
+        ]
+
+        for method_name in possible_method_names:
+            if not hasattr(self.sheet, method_name):
+                continue
+
+            try:
+                method = getattr(self.sheet, method_name)
+                boxes = method()
+            except Exception:
+                logger.debug(
+                    "Не удалось получить selection boxes через %s",
+                    method_name,
+                    exc_info=True
+                )
+                continue
+
+            coords.update(
+                self._parse_selection_boxes(boxes)
+            )
+
+            if coords:
+                break
+
+        return coords
+
+    def _parse_selection_boxes(self, boxes) -> set[tuple[int, int]]:
+        """
+        Преобразует selection boxes tksheet в координаты ячеек.
+
+        Ожидаемый вариант box:
+            (row_start, col_start, row_end, col_end)
+
+        row_end и col_end считаем как exclusive-границу.
+        """
+
+        coords = set()
+
+        if not boxes:
+            return coords
+
+        for box in boxes:
+            try:
+                if isinstance(box, dict):
+                    values = self._extract_box_from_dict(box)
+                else:
+                    values = list(box)
+
+                if len(values) < 4:
+                    continue
+
+                row_start = int(values[0])
+                col_start = int(values[1])
+                row_end = int(values[2])
+                col_end = int(values[3])
+
+                row_from = min(row_start, row_end)
+                row_to = max(row_start, row_end)
+
+                col_from = min(col_start, col_end)
+                col_to = max(col_start, col_end)
+
+                # В tksheet конечная граница обычно exclusive.
+                # Если вдруг пришёл box одной ячейки как одинаковые координаты,
+                # расширяем его до одной ячейки.
+                if row_to == row_from:
+                    row_to += 1
+
+                if col_to == col_from:
+                    col_to += 1
+
+                for row in range(row_from, row_to):
+                    for col in range(col_from, col_to):
+                        coords.add((row, col))
+
+            except Exception:
+                logger.debug(
+                    "Не удалось разобрать selection box: %s",
+                    box,
+                    exc_info=True
+                )
+
+        return coords
+
+    def _extract_box_from_dict(self, box: dict) -> list:
+        """
+        Пытается достать координаты прямоугольника из dict.
+        Разные версии tksheet могут возвращать разные структуры.
+        """
+
+        for keys in [
+            ("from_r", "from_c", "upto_r", "upto_c"),
+            ("r1", "c1", "r2", "c2"),
+            ("row_start", "column_start", "row_end", "column_end"),
+        ]:
+            if all(key in box for key in keys):
+                return [
+                    box[keys[0]],
+                    box[keys[1]],
+                    box[keys[2]],
+                    box[keys[3]],
+                ]
+
+        return []
+
     def _get_sheet_dimensions(self) -> tuple[int, int]:
         """Возвращает размеры текущей таблицы tksheet."""
 
@@ -930,6 +1111,43 @@ class ExcelViewerFrame(ctk.CTkFrame):
                 clean_lines.append(clean_line)
 
         return "\n".join(clean_lines).strip()
+
+    def clear_selection(self):
+        """
+        Сбрасывает выделение в Excel-таблице.
+        """
+
+        try:
+            self.sheet.deselect("all")
+        except TypeError:
+            try:
+                self.sheet.deselect()
+            except Exception:
+                logger.exception("Не удалось сбросить выделение Excel-таблицы")
+        except Exception:
+            logger.exception("Не удалось сбросить выделение Excel-таблицы")
+
+        self._reset_current_cell()
+        self._redraw_sheet()
+
+        logger.info("Выделение Excel-таблицы сброшено")
+
+    def _redraw_sheet(self):
+        """
+        Безопасно перерисовывает tksheet.
+        """
+
+        try:
+            if hasattr(self.sheet, "redraw"):
+                self.sheet.redraw()
+                return
+
+            if hasattr(self.sheet, "refresh"):
+                self.sheet.refresh()
+                return
+
+        except Exception:
+            logger.debug("Не удалось перерисовать Excel-таблицу", exc_info=True)
 
     # =========================================================
     # МАСШТАБ
