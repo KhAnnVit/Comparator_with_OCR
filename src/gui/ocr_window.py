@@ -48,7 +48,15 @@ class OCRViewerFrame(ctk.CTkFrame):
     def _configure_grid(self):
         """Настраивает сетку OCR-раздела."""
 
+        # row=0 — вкладки OCR
+        # row=1 — превью изображения
+        # row=2 — текст OCR, занимает всё свободное место
+        # row=3 — кнопки переноса текста
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=0)
         self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=0)
+
         self.grid_columnconfigure(0, weight=1)
 
     # =========================================================
@@ -116,7 +124,7 @@ class OCRViewerFrame(ctk.CTkFrame):
             column=0,
             sticky="nsew",
             padx=10,
-            pady=5
+            pady=(5, 5)
         )
 
         self._set_text(self.DEFAULT_TEXT)
@@ -126,7 +134,7 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self.bottom_panel = ctk.CTkFrame(self)
         self.bottom_panel.grid(
-            row=2,
+            row=3,
             column=0,
             sticky="ew",
             padx=10,
