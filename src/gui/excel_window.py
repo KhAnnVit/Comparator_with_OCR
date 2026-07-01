@@ -19,8 +19,11 @@ class ExcelViewerFrame(ctk.CTkFrame):
     - выбирать одну ячейку;
     - выделять несколько ячеек;
     - отправлять одну ячейку в поле сравнения;
-    - отправлять несколько выделенных ячеек в поле сравнения одним блоком;
-    - открывать ячейку в отдельном окне для просмотра/редактирования.
+    - добавлять одну ячейку в конец поля сравнения;
+    - отправлять несколько выделенных ячеек в поле сравнения;
+    - добавлять несколько выделенных ячеек в конец поля сравнения;
+    - открывать ячейку в отдельном окне;
+    - отправлять весь текст ячейки или выделенный фрагмент из окна ячейки.
     """
 
     DEFAULT_SHEET_TEXT = "Лист не выбран"
@@ -47,7 +50,6 @@ class ExcelViewerFrame(ctk.CTkFrame):
         """Создаёт переменные состояния Excel-раздела."""
 
         self.df = None
-
         self.current_excel_path = None
 
         self.sheet_names = []
@@ -104,7 +106,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
             self.top_panel,
             text="Загрузить Excel",
             command=self.load_excel,
-            width=150
+            width=140
         )
         self.btn_load.pack(side="left", padx=5, pady=5)
 
@@ -151,7 +153,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.btn_send_selected_1 = ctk.CTkButton(
             self.top_panel,
             text="Выделенное → Поле 1",
-            command=lambda: self.send_selected_cells(1),
+            command=lambda: self.send_selected_cells(1, append=False),
             width=160
         )
         self.btn_send_selected_1.pack(side="left", padx=(20, 5), pady=5)
@@ -159,10 +161,26 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self.btn_send_selected_2 = ctk.CTkButton(
             self.top_panel,
             text="Выделенное → Поле 2",
-            command=lambda: self.send_selected_cells(2),
+            command=lambda: self.send_selected_cells(2, append=False),
             width=160
         )
         self.btn_send_selected_2.pack(side="left", padx=5, pady=5)
+
+        self.btn_append_selected_1 = ctk.CTkButton(
+            self.top_panel,
+            text="Добавить → Поле 1",
+            command=lambda: self.send_selected_cells(1, append=True),
+            width=145
+        )
+        self.btn_append_selected_1.pack(side="left", padx=(20, 5), pady=5)
+
+        self.btn_append_selected_2 = ctk.CTkButton(
+            self.top_panel,
+            text="Добавить → Поле 2",
+            command=lambda: self.send_selected_cells(2, append=True),
+            width=145
+        )
+        self.btn_append_selected_2.pack(side="left", padx=5, pady=5)
 
     def _create_table_container(self):
         """Создаёт контейнер для таблицы."""
@@ -208,9 +226,12 @@ class ExcelViewerFrame(ctk.CTkFrame):
         )
         self.sheet.grid(row=0, column=0, sticky="nsew")
 
-        self.sheet.enable_bindings(
-            "all"
-        )
+        # Пока оставляем all, чтобы работали:
+        # - выделение протягиванием;
+        # - выделение строк/колонок;
+        # - копирование;
+        # - навигация.
+        self.sheet.enable_bindings("all")
 
         self.after(100, self._setup_context_menu)
 
@@ -229,22 +250,32 @@ class ExcelViewerFrame(ctk.CTkFrame):
 
         try:
             mt = self.sheet.MT
-
             mt.empty_rc_popup_menu = True
             mt.extra_rc_func = self._on_right_click
-
             mt.extra_table_rc_menu_funcs = {
-                "📋 Текущая ячейка → Поле 1": {
-                    "command": lambda: self.send_full_cell(1)
+                "📋 Вся ячейка → Поле 1": {
+                    "command": lambda: self.send_full_cell(1, append=False)
                 },
-                "📋 Текущая ячейка → Поле 2": {
-                    "command": lambda: self.send_full_cell(2)
+                "📋 Вся ячейка → Поле 2": {
+                    "command": lambda: self.send_full_cell(2, append=False)
+                },
+                "➕ Добавить ячейку → Поле 1": {
+                    "command": lambda: self.send_full_cell(1, append=True)
+                },
+                "➕ Добавить ячейку → Поле 2": {
+                    "command": lambda: self.send_full_cell(2, append=True)
                 },
                 "📋 Выделенные ячейки → Поле 1": {
-                    "command": lambda: self.send_selected_cells(1)
+                    "command": lambda: self.send_selected_cells(1, append=False)
                 },
                 "📋 Выделенные ячейки → Поле 2": {
-                    "command": lambda: self.send_selected_cells(2)
+                    "command": lambda: self.send_selected_cells(2, append=False)
+                },
+                "➕ Добавить выделенные ячейки → Поле 1": {
+                    "command": lambda: self.send_selected_cells(1, append=True)
+                },
+                "➕ Добавить выделенные ячейки → Поле 2": {
+                    "command": lambda: self.send_selected_cells(2, append=True)
                 },
             }
 
@@ -269,16 +300,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
     # =========================================================
 
     def load_excel(self):
-        """
-        Загружает Excel-файл.
-
-        GUI отвечает только за:
-        - выбор файла;
-        - показ ошибок;
-        - обновление выпадающего списка листов.
-
-        Работа с pandas находится в ExcelService.
-        """
+        """Загружает Excel-файл."""
 
         file_path = filedialog.askopenfilename(
             filetypes=[
@@ -499,9 +521,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
         )
 
     def on_double_click(self, event=None):
-        """
-        Двойной клик по ячейке открывает окно редактирования.
-        """
+        """Двойной клик по ячейке открывает окно редактирования."""
 
         self.on_cell_select()
 
@@ -561,9 +581,12 @@ class ExcelViewerFrame(ctk.CTkFrame):
     # ОТПРАВКА В СРАВНЕНИЕ
     # =========================================================
 
-    def send_full_cell(self, field_num):
+    def send_full_cell(self, field_num, append=False):
         """
         Отправляет всю выбранную ячейку в поле сравнения.
+
+        append=False — заменить поле.
+        append=True  — добавить в конец поля.
         """
 
         self.on_cell_select()
@@ -581,16 +604,16 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self._send_text_to_compare(
             text=clean_text,
             field_num=field_num,
-            source="excel_cell"
+            source="excel_cell",
+            append=append
         )
 
-    def send_selected_cells(self, field_num):
+    def send_selected_cells(self, field_num, append=False):
         """
         Отправляет все выделенные ячейки Excel в поле сравнения.
 
-        Несколько ячеек собираются в текстовые блоки.
-        Каждый блок отделяется пустой строкой, чтобы сравнение
-        могло искать эти блоки внутри OCR-текста упаковки.
+        append=False — заменить поле.
+        append=True  — добавить в конец поля.
         """
 
         selected_text = self._build_selected_cells_text()
@@ -606,14 +629,56 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self._send_text_to_compare(
             text=selected_text,
             field_num=field_num,
-            source="excel_selected"
+            source="excel_selected",
+            append=append
         )
 
         logger.info(
-            "Выделенные Excel-ячейки отправлены в поле сравнения %s. Длина: %s",
+            (
+                "Выделенные Excel-ячейки отправлены в поле сравнения %s. "
+                "Длина: %s, append=%s"
+            ),
             field_num,
-            len(selected_text)
+            len(selected_text),
+            append
         )
+
+    def _send_text_to_compare(
+        self,
+        text,
+        field_num,
+        source="excel",
+        append=False
+    ):
+        """
+        Отправляет текст в поле сравнения через AppController.
+        """
+
+        if not hasattr(self.master, "controller"):
+            logger.warning("AppController не найден. Текст из Excel не отправлен.")
+            return
+
+        self.master.controller.send_text_to_compare(
+            text=text,
+            field_num=field_num,
+            source=source,
+            append=append
+        )
+
+        logger.info(
+            (
+                "Текст из Excel отправлен в поле сравнения %s. "
+                "Источник: %s, длина: %s, append=%s"
+            ),
+            field_num,
+            source,
+            len(text),
+            append
+        )
+
+    # =========================================================
+    # СБОР ТЕКСТА ИЗ ВЫДЕЛЕННЫХ ЯЧЕЕК
+    # =========================================================
 
     def _build_selected_cells_text(self) -> str:
         """
@@ -746,9 +811,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
         return sorted(filtered_coords, key=lambda item: (item[0], item[1]))
 
     def _get_selected_cells_directly(self) -> set[tuple[int, int]]:
-        """
-        Получает выделенные ячейки напрямую через tksheet.
-        """
+        """Получает выделенные ячейки напрямую через tksheet."""
 
         coords = set()
 
@@ -769,12 +832,9 @@ class ExcelViewerFrame(ctk.CTkFrame):
         return coords
 
     def _get_selected_cells_from_rows(self) -> set[tuple[int, int]]:
-        """
-        Получает ячейки, если пользователь выделил строки.
-        """
+        """Получает ячейки, если пользователь выделил строки."""
 
         coords = set()
-
         row_count, col_count = self._get_sheet_dimensions()
 
         try:
@@ -796,12 +856,9 @@ class ExcelViewerFrame(ctk.CTkFrame):
         return coords
 
     def _get_selected_cells_from_columns(self) -> set[tuple[int, int]]:
-        """
-        Получает ячейки, если пользователь выделил колонки.
-        """
+        """Получает ячейки, если пользователь выделил колонки."""
 
         coords = set()
-
         row_count, col_count = self._get_sheet_dimensions()
 
         try:
@@ -836,9 +893,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
         return coords
 
     def _get_sheet_dimensions(self) -> tuple[int, int]:
-        """
-        Возвращает размеры текущей таблицы tksheet.
-        """
+        """Возвращает размеры текущей таблицы tksheet."""
 
         try:
             data = self.sheet.get_sheet_data()
@@ -856,9 +911,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
             return 0, 0
 
     def _clean_excel_cell_text(self, value) -> str:
-        """
-        Аккуратно очищает текст ячейки перед отправкой в сравнение.
-        """
+        """Аккуратно очищает текст ячейки перед отправкой в сравнение."""
 
         if value is None:
             return ""
@@ -877,28 +930,6 @@ class ExcelViewerFrame(ctk.CTkFrame):
                 clean_lines.append(clean_line)
 
         return "\n".join(clean_lines).strip()
-
-    def _send_text_to_compare(self, text, field_num, source="excel"):
-        """
-        Отправляет текст в поле сравнения через AppController.
-        """
-
-        if not hasattr(self.master, "controller"):
-            logger.warning("AppController не найден. Текст из Excel не отправлен.")
-            return
-
-        self.master.controller.send_text_to_compare(
-            text=text,
-            field_num=field_num,
-            source=source
-        )
-
-        logger.info(
-            "Текст из Excel отправлен в поле сравнения %s. Источник=%s. Длина: %s",
-            field_num,
-            source,
-            len(text)
-        )
 
     # =========================================================
     # МАСШТАБ
@@ -932,7 +963,8 @@ class CellEditWindow(ctk.CTkToplevel):
     Позволяет:
     - просмотреть полный текст ячейки;
     - отредактировать текст;
-    - отправить весь текст или выделенный фрагмент в сравнение.
+    - отправить весь текст или выделенный фрагмент в сравнение;
+    - добавить весь текст или выделенный фрагмент в конец поля сравнения.
     """
 
     def __init__(self, parent, cell_value, row, col, on_close):
@@ -1008,23 +1040,45 @@ class CellEditWindow(ctk.CTkToplevel):
         self.context_menu = Menu(self, tearoff=0)
 
         self.context_menu.add_command(
-            label="➕ Выделенный текст → Поле 1",
-            command=lambda: self._send_selected_text(1)
+            label="📋 Выделенный текст → Поле 1",
+            command=lambda: self._send_selected_text(1, append=False)
         )
         self.context_menu.add_command(
-            label="➕ Выделенный текст → Поле 2",
-            command=lambda: self._send_selected_text(2)
+            label="📋 Выделенный текст → Поле 2",
+            command=lambda: self._send_selected_text(2, append=False)
+        )
+
+        self.context_menu.add_separator()
+
+        self.context_menu.add_command(
+            label="➕ Добавить выделенный текст → Поле 1",
+            command=lambda: self._send_selected_text(1, append=True)
+        )
+        self.context_menu.add_command(
+            label="➕ Добавить выделенный текст → Поле 2",
+            command=lambda: self._send_selected_text(2, append=True)
         )
 
         self.context_menu.add_separator()
 
         self.context_menu.add_command(
             label="📋 Вся ячейка → Поле 1",
-            command=lambda: self._send_full_text(1)
+            command=lambda: self._send_full_text(1, append=False)
         )
         self.context_menu.add_command(
             label="📋 Вся ячейка → Поле 2",
-            command=lambda: self._send_full_text(2)
+            command=lambda: self._send_full_text(2, append=False)
+        )
+
+        self.context_menu.add_separator()
+
+        self.context_menu.add_command(
+            label="➕ Добавить всю ячейку → Поле 1",
+            command=lambda: self._send_full_text(1, append=True)
+        )
+        self.context_menu.add_command(
+            label="➕ Добавить всю ячейку → Поле 2",
+            command=lambda: self._send_full_text(2, append=True)
         )
 
     def _bind_events(self):
@@ -1049,7 +1103,7 @@ class CellEditWindow(ctk.CTkToplevel):
     # ОТПРАВКА ТЕКСТА В СРАВНЕНИЕ
     # =========================================================
 
-    def _send_selected_text(self, field_num):
+    def _send_selected_text(self, field_num, append=False):
         """Отправляет выделенный текст в поле сравнения."""
 
         try:
@@ -1068,10 +1122,11 @@ class CellEditWindow(ctk.CTkToplevel):
         self.parent_frame._send_text_to_compare(
             text=selected_text,
             field_num=field_num,
-            source="excel_cell_selection"
+            source="excel_cell_selection",
+            append=append
         )
 
-    def _send_full_text(self, field_num):
+    def _send_full_text(self, field_num, append=False):
         """Отправляет весь текст ячейки в поле сравнения."""
 
         full_text = self.textbox.get("1.0", "end-1c").strip()
@@ -1087,7 +1142,8 @@ class CellEditWindow(ctk.CTkToplevel):
         self.parent_frame._send_text_to_compare(
             text=full_text,
             field_num=field_num,
-            source="excel_cell_window"
+            source="excel_cell_window",
+            append=append
         )
 
     # =========================================================

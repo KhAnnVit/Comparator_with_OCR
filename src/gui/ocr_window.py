@@ -126,7 +126,7 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self.bottom_panel = ctk.CTkFrame(self)
         self.bottom_panel.grid(
-            row=3,
+            row=2,
             column=0,
             sticky="ew",
             padx=10,
@@ -138,26 +138,52 @@ class OCRViewerFrame(ctk.CTkFrame):
         self.btn_send_1 = ctk.CTkButton(
             self.bottom_panel,
             text="Перенести полностью в Поле 1",
-            command=lambda: self.send_full_text(1)
+            command=lambda: self.send_full_text(1, append=False)
         )
         self.btn_send_1.grid(
             row=0,
             column=0,
             padx=5,
-            pady=10,
+            pady=(10, 4),
             sticky="ew"
         )
 
         self.btn_send_2 = ctk.CTkButton(
             self.bottom_panel,
             text="Перенести полностью в Поле 2",
-            command=lambda: self.send_full_text(2)
+            command=lambda: self.send_full_text(2, append=False)
         )
         self.btn_send_2.grid(
             row=0,
             column=1,
             padx=5,
-            pady=10,
+            pady=(10, 4),
+            sticky="ew"
+        )
+
+        self.btn_append_1 = ctk.CTkButton(
+            self.bottom_panel,
+            text="Добавить полностью в Поле 1",
+            command=lambda: self.send_full_text(1, append=True)
+        )
+        self.btn_append_1.grid(
+            row=1,
+            column=0,
+            padx=5,
+            pady=(4, 10),
+            sticky="ew"
+        )
+
+        self.btn_append_2 = ctk.CTkButton(
+            self.bottom_panel,
+            text="Добавить полностью в Поле 2",
+            command=lambda: self.send_full_text(2, append=True)
+        )
+        self.btn_append_2.grid(
+            row=1,
+            column=1,
+            padx=5,
+            pady=(4, 10),
             sticky="ew"
         )
 
@@ -172,12 +198,24 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self.context_menu.add_command(
             label="Перенести выделенное в Поле 1",
-            command=lambda: self.send_selection(1)
+            command=lambda: self.send_selection(1, append=False)
         )
 
         self.context_menu.add_command(
             label="Перенести выделенное в Поле 2",
-            command=lambda: self.send_selection(2)
+            command=lambda: self.send_selection(2, append=False)
+        )
+
+        self.context_menu.add_separator()
+
+        self.context_menu.add_command(
+            label="Добавить выделенное в Поле 1",
+            command=lambda: self.send_selection(1, append=True)
+        )
+
+        self.context_menu.add_command(
+            label="Добавить выделенное в Поле 2",
+            command=lambda: self.send_selection(2, append=True)
         )
 
     def _bind_events(self):
@@ -512,7 +550,7 @@ class OCRViewerFrame(ctk.CTkFrame):
     # ОТПРАВКА ТЕКСТА В СРАВНЕНИЕ
     # =========================================================
 
-    def send_selection(self, field_num):
+    def send_selection(self, field_num, append=False):
         """
         Отправляет выделенный фрагмент OCR-текста в поле сравнения.
         """
@@ -529,19 +567,14 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self._send_text_to_compare(
             text=selected_text,
-            field_num=field_num
+            field_num=field_num,
+            append=append
         )
 
-    def send_full_text(self, field_num):
+    def send_full_text(self, field_num, append=False):
         """
         Отправляет весь OCR-текст в поле сравнения.
-
-        field_num:
-            1 — левое поле сравнения
-            2 — правое поле сравнения
         """
-
-        self._save_current_ocr_tab()
 
         full_text = self._get_full_text()
 
@@ -555,30 +588,29 @@ class OCRViewerFrame(ctk.CTkFrame):
 
         self._send_text_to_compare(
             text=full_text,
-            field_num=field_num
+            field_num=field_num,
+            append=append
         )
 
-    def _send_text_to_compare(self, text, field_num):
+    def _send_text_to_compare(self, text, field_num, append=False):
         """
         Отправляет текст в Compare-раздел через AppController.
         """
 
         if not hasattr(self.master, "controller"):
             logger.warning("AppController не найден. OCR-текст не отправлен.")
-            messagebox.showerror(
-                "Ошибка",
-                "Не удалось отправить текст: контроллер приложения не найден."
-            )
             return
 
         self.master.controller.send_text_to_compare(
             text=text,
             field_num=field_num,
-            source="ocr"
+            source="ocr",
+            append=append
         )
 
         logger.info(
-            "OCR-текст отправлен в поле сравнения %s. Длина: %s",
+            "OCR-текст отправлен в поле сравнения %s. Длина: %s, append=%s",
             field_num,
-            len(text)
+            len(text),
+            append
         )

@@ -170,7 +170,13 @@ class AppController:
     # COMPARE
     # =========================================================
 
-    def send_text_to_compare(self, text: str, field_num: int, source: str = "unknown"):
+    def send_text_to_compare(
+            self,
+            text: str,
+            field_num: int,
+            source: str = "unknown",
+            append: bool = False
+    ):
         """
         Отправляет текст в одно из полей сравнения.
 
@@ -178,41 +184,87 @@ class AppController:
             1 — левое поле
             2 — правое поле
 
-        source:
-            "ocr"
-            "excel"
-            "manual"
-            "unknown"
+        append:
+            False — заменить содержимое поля
+            True  — добавить текст в конец поля
         """
 
         if field_num not in (1, 2):
             logger.warning("Некорректный номер поля сравнения: %s", field_num)
             return
 
+        text = text or ""
+
         if field_num == 1:
-            self.state.compare_text_1 = text
+            old_text = self.state.compare_text_1
+            final_text = self._build_compare_text(
+                old_text=old_text,
+                new_text=text,
+                append=append
+            )
+
+            self.state.compare_text_1 = final_text
             self.state.compare_text_1_source = source
             method_name = "set_text_left"
+
         else:
-            self.state.compare_text_2 = text
+            old_text = self.state.compare_text_2
+            final_text = self._build_compare_text(
+                old_text=old_text,
+                new_text=text,
+                append=append
+            )
+
+            self.state.compare_text_2 = final_text
             self.state.compare_text_2_source = source
             method_name = "set_text_right"
 
         updated = self._call_frame_method(
             self.TAB_COMPARE,
             method_name,
-            text
+            final_text
         )
 
         logger.info(
-            "Текст отправлен в поле сравнения %s. Источник: %s, длина: %s",
+            (
+                "Текст отправлен в поле сравнения %s. "
+                "Источник: %s, длина добавленного текста: %s, append=%s"
+            ),
             field_num,
             source,
-            len(text)
+            len(text),
+            append
         )
 
         if updated:
             self.go_to_tab(self.TAB_COMPARE)
+
+    def _build_compare_text(
+            self,
+            old_text: str,
+            new_text: str,
+            append: bool = False
+    ) -> str:
+        """
+        Собирает итоговый текст для поля сравнения.
+
+        Если append=False — заменяем поле.
+        Если append=True — добавляем новый текст в конец.
+        """
+
+        old_text = old_text or ""
+        new_text = new_text or ""
+
+        if not append:
+            return new_text
+
+        if not old_text.strip():
+            return new_text
+
+        if not new_text.strip():
+            return old_text
+
+        return old_text.rstrip() + "\n\n" + new_text.strip()
 
     def clear_compare(self):
         """
