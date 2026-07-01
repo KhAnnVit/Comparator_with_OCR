@@ -93,7 +93,7 @@ class ExcelViewerFrame(ctk.CTkFrame):
     def _create_top_panel(self):
         """Создаёт верхнюю панель управления."""
 
-        self.top_panel = ctk.CTkFrame(self, height=40)
+        self.top_panel = ctk.CTkFrame(self)
         self.top_panel.grid(
             row=0,
             column=0,
@@ -102,93 +102,159 @@ class ExcelViewerFrame(ctk.CTkFrame):
             pady=5
         )
 
+        for column_index in range(5):
+            self.top_panel.grid_columnconfigure(column_index, weight=1)
+
+        # =====================================================
+        # ПЕРВАЯ СТРОКА: загрузка, лист, масштаб
+        # =====================================================
+
         self.btn_load = ctk.CTkButton(
             self.top_panel,
             text="Загрузить Excel",
             command=self.load_excel,
             width=140
         )
-        self.btn_load.pack(side="left", padx=5, pady=5)
+        self.btn_load.grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(8, 6),
+            pady=(8, 4)
+        )
 
         self.sheet_label = ctk.CTkLabel(
             self.top_panel,
             text="Лист:"
         )
-        self.sheet_label.pack(side="left", padx=(15, 5), pady=5)
+        self.sheet_label.grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(6, 4),
+            pady=(8, 4)
+        )
 
         self.sheet_menu = ctk.CTkOptionMenu(
             self.top_panel,
             values=[self.DEFAULT_SHEET_TEXT],
             variable=self.sheet_var,
             command=self.load_selected_sheet,
-            width=180,
+            width=220,
             state="disabled"
         )
-        self.sheet_menu.pack(side="left", padx=5, pady=5)
+        self.sheet_menu.grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=(4, 8),
+            pady=(8, 4)
+        )
+
+        self.zoom_frame = ctk.CTkFrame(
+            self.top_panel,
+            fg_color="transparent"
+        )
+        self.zoom_frame.grid(
+            row=0,
+            column=3,
+            sticky="w",
+            padx=8,
+            pady=(8, 4)
+        )
 
         self.btn_zoom_in = ctk.CTkButton(
-            self.top_panel,
+            self.zoom_frame,
             text="➕",
             command=self.zoom_in,
-            width=40
+            width=45
         )
-        self.btn_zoom_in.pack(side="left", padx=(15, 5), pady=5)
+        self.btn_zoom_in.pack(side="left", padx=4)
 
         self.btn_zoom_out = ctk.CTkButton(
-            self.top_panel,
+            self.zoom_frame,
             text="➖",
             command=self.zoom_out,
-            width=40
+            width=45
         )
-        self.btn_zoom_out.pack(side="left", padx=5, pady=5)
+        self.btn_zoom_out.pack(side="left", padx=4)
 
         self.btn_zoom_reset = ctk.CTkButton(
-            self.top_panel,
+            self.zoom_frame,
             text="100%",
             command=self.zoom_reset,
-            width=60
+            width=65
         )
-        self.btn_zoom_reset.pack(side="left", padx=5, pady=5)
+        self.btn_zoom_reset.pack(side="left", padx=4)
+
+        # =====================================================
+        # ВТОРАЯ СТРОКА: перенос текста в сравнение
+        # =====================================================
 
         self.btn_send_selected_1 = ctk.CTkButton(
             self.top_panel,
             text="Выделенное → Поле 1",
-            command=lambda: self.send_selected_cells(1, append=False),
-            width=160
+            command=lambda: self.send_selected_cells(1, append=False)
         )
-        self.btn_send_selected_1.pack(side="left", padx=(20, 5), pady=5)
+        self.btn_send_selected_1.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=(8, 6),
+            pady=(4, 8)
+        )
 
         self.btn_send_selected_2 = ctk.CTkButton(
             self.top_panel,
             text="Выделенное → Поле 2",
-            command=lambda: self.send_selected_cells(2, append=False),
-            width=160
+            command=lambda: self.send_selected_cells(2, append=False)
         )
-        self.btn_send_selected_2.pack(side="left", padx=5, pady=5)
+        self.btn_send_selected_2.grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=6,
+            pady=(4, 8)
+        )
 
         self.btn_append_selected_1 = ctk.CTkButton(
             self.top_panel,
             text="Добавить → Поле 1",
-            command=lambda: self.send_selected_cells(1, append=True),
-            width=145
+            command=lambda: self.send_selected_cells(1, append=True)
         )
-        self.btn_append_selected_1.pack(side="left", padx=(20, 5), pady=5)
+        self.btn_append_selected_1.grid(
+            row=1,
+            column=2,
+            sticky="ew",
+            padx=6,
+            pady=(4, 8)
+        )
 
         self.btn_append_selected_2 = ctk.CTkButton(
             self.top_panel,
             text="Добавить → Поле 2",
-            command=lambda: self.send_selected_cells(2, append=True),
-            width=145
+            command=lambda: self.send_selected_cells(2, append=True)
         )
-        self.btn_append_selected_2.pack(side="left", padx=5, pady=5)
+        self.btn_append_selected_2.grid(
+            row=1,
+            column=3,
+            sticky="ew",
+            padx=6,
+            pady=(4, 8)
+        )
 
         self.btn_clear_selection = ctk.CTkButton(
             self.top_panel,
             text="Сбросить выделение",
-            command=self.clear_selection,
-            width=150
+            command=self.clear_selection
         )
-        self.btn_clear_selection.pack(side="left", padx=(20, 5), pady=5)
+        self.btn_clear_selection.grid(
+            row=1,
+            column=4,
+            sticky="ew",
+            padx=(6, 8),
+            pady=(4, 8)
+        )
 
     def _create_table_container(self):
         """Создаёт контейнер для таблицы."""
