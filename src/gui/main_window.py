@@ -122,9 +122,11 @@ class App(ctk.CTk):
         # ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ
         # =====================================================
 
-        self.bind_all("<Control-c>", self._global_copy)
-        self.bind_all("<Control-v>", self._global_paste)
-        self.bind_all("<Control-a>", self._global_select_all)
+        # Важно:
+        # не используем <Control-c>, <Control-v>, <Control-a>,
+        # потому что на русской раскладке символы другие.
+        # Вместо этого ловим Ctrl + физическую клавишу через event.keycode.
+        self.bind_all("<Control-KeyPress>", self._global_ctrl_keypress, add="+")
 
         # Открываем первый раздел по умолчанию.
         self.controller.go_to_tab("tab1")
@@ -163,47 +165,109 @@ class App(ctk.CTk):
         )
 
     # =========================================================
-    # ГЛОБАЛЬНОЕ КОПИРОВАНИЕ
+    # ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ
     # =========================================================
+
+    def _global_ctrl_keypress(self, event=None):
+        """
+        Единый обработчик Ctrl+клавиша.
+
+        Используем keycode, а не символ клавиши.
+        Поэтому Ctrl+C / Ctrl+V / Ctrl+A работают и на русской,
+        и на английской раскладке.
+
+        Windows keycode:
+            A = 65
+            C = 67
+            V = 86
+            X = 88
+            Z = 90
+        """
+
+        if event is None:
+            return
+
+        keycode = event.keycode
+
+        if keycode == 67:
+            return self._global_copy(event)
+
+        if keycode == 86:
+            return self._global_paste(event)
+
+        if keycode == 88:
+            return self._global_cut(event)
+
+        if keycode == 65:
+            return self._global_select_all(event)
+
+        if keycode == 90:
+            return self._global_undo(event)
+
+    def _get_focused_text_widget(self):
+        """
+        Возвращает активный текстовый виджет.
+
+        Поддерживает:
+        - tk.Text
+        - tk.Entry
+        - внутренние Text/Entry виджеты CustomTkinter
+        """
+
+        widget = self.focus_get()
+
+        if widget is None:
+            return None
+
+        widget_class = widget.winfo_class()
+
+        if isinstance(widget, (tk.Text, tk.Entry)):
+            return widget
+
+        if widget_class in {"Text", "Entry", "TEntry"}:
+            return widget
+
+        return None
 
     def _global_copy(self, event=None):
         """
-        Глобальный Ctrl+C для tk.Text и CTkTextbox.
+        Глобальный Ctrl+C для текстовых полей.
+        Работает на русской и английской раскладке.
         """
 
-        widget = self.focus_get()
+        widget = self._get_focused_text_widget()
 
-        if not widget:
+        if widget is None:
             return
 
-        if isinstance(widget, (tk.Text, ctk.CTkTextbox)):
-            try:
-                selected_text = widget.get("sel.first", "sel.last")
-                self.clipboard_clear()
-                self.clipboard_append(selected_text)
-                return "break"
-            except tk.TclError:
-                pass
+        try:
+            selected_text = widget.selection_get()
+        except tk.TclError:
+            return "break"
 
-    # =========================================================
-    # ГЛОБАЛЬНАЯ ВСТАВКА
-    # =========================================================
+        self.clipboard_clear()
+        self.clipboard_append(selected_text)
+
+        return "break"
 
     def _global_paste(self, event=None):
         """
-        Глобальный Ctrl+V для tk.Text и CTkTextbox.
+        Глобальный Ctrl+V для текстовых полей.
+        Работает на русской и английской раскладке.
         """
 
-        widget = self.focus_get()
+        widget = self._get_focused_text_widget()
 
-        if not widget:
+        if widget is None:
             return
 
-        if isinstance(widget, (tk.Text, ctk.CTkTextbox)):
-            try:
-                clipboard_text = self.clipboard_get()
+        try:
+            clipboard_text = self.clipboard_get()
+        except tk.TclError:
+            return "break"
 
-                # Если есть выделение — удаляем его перед вставкой.
+        try:
+            if isinstance(widget, tk.Text) or widget.winfo_class() == "Text":
                 try:
                     widget.delete("sel.first", "sel.last")
                 except tk.TclError:
@@ -212,30 +276,90 @@ class App(ctk.CTk):
                 widget.insert("insert", clipboard_text)
                 return "break"
 
-            except tk.TclError:
-                pass
+            if isinstance(widget, tk.Entry) or widget.winfo_class() in {"Entry", "TEntry"}:
+                try:
+                    if widget.selection_present():
+                        widget.delete("sel.first", "sel.last")
+                except tk.TclError:
+                    pass
 
-    # =========================================================
-    # ГЛОБАЛЬНОЕ ВЫДЕЛЕНИЕ ВСЕГО
-    # =========================================================
+                widget.insert("insert", clipboard_text)
+                return "break"
+
+        except tk.TclError:
+            return "break"
+
+    def _global_cut(self, event=None):
+        """
+        Глобальный Ctrl+X для текстовых полей.
+        """
+
+        widget = self._get_focused_text_widget()
+
+        if widget is None:
+            return
+
+        try:
+            selected_text = widget.selection_get()
+        except tk.TclError:
+            return "break"
+
+        self.clipboard_clear()
+        self.clipboard_append(selected_text)
+
+        try:
+            if isinstance(widget, tk.Text) or widget.winfo_class() == "Text":
+                widget.delete("sel.first", "sel.last")
+                return "break"
+
+            if isinstance(widget, tk.Entry) or widget.winfo_class() in {"Entry", "TEntry"}:
+                widget.delete("sel.first", "sel.last")
+                return "break"
+
+        except tk.TclError:
+            return "break"
 
     def _global_select_all(self, event=None):
         """
         Глобальный Ctrl+A для текстовых полей.
+        Работает на русской и английской раскладке.
         """
 
-        widget = self.focus_get()
+        widget = self._get_focused_text_widget()
 
-        if not widget:
+        if widget is None:
             return
 
-        if isinstance(widget, tk.Text):
-            widget.tag_add("sel", "1.0", "end")
+        try:
+            if isinstance(widget, tk.Text) or widget.winfo_class() == "Text":
+                widget.tag_add("sel", "1.0", "end")
+                widget.mark_set("insert", "1.0")
+                widget.see("insert")
+                return "break"
+
+            if isinstance(widget, tk.Entry) or widget.winfo_class() in {"Entry", "TEntry"}:
+                widget.select_range(0, "end")
+                widget.icursor("end")
+                return "break"
+
+        except tk.TclError:
             return "break"
 
-        if isinstance(widget, ctk.CTkTextbox):
-            try:
-                widget.tag_add("sel", "1.0", "end")
-                return "break"
-            except tk.TclError:
-                pass
+    def _global_undo(self, event=None):
+        """
+        Глобальный Ctrl+Z.
+
+        Для tk.Text и tk.Entry пробуем вызвать стандартное событие Undo.
+        Если undo не поддерживается, просто ничего не делаем.
+        """
+
+        widget = self._get_focused_text_widget()
+
+        if widget is None:
+            return
+
+        try:
+            widget.event_generate("<<Undo>>")
+            return "break"
+        except tk.TclError:
+            return "break"
