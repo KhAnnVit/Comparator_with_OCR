@@ -91,9 +91,18 @@ class ExcelViewerFrame(ctk.CTkFrame):
         self._setup_context_menu()
 
     def _create_top_panel(self):
-        """Создаёт верхнюю панель управления."""
+        """
+        Создаёт верхнюю панель управления Excel.
 
-        self.top_panel = ctk.CTkFrame(self)
+        Панель сделана горизонтально прокручиваемой,
+        чтобы кнопки не сжимались и не обрезались при уменьшении окна.
+        """
+
+        self.top_panel = ctk.CTkScrollableFrame(
+            self,
+            height=110,
+            orientation="horizontal"
+        )
         self.top_panel.grid(
             row=0,
             column=0,
@@ -102,64 +111,72 @@ class ExcelViewerFrame(ctk.CTkFrame):
             pady=5
         )
 
-        for column_index in range(5):
-            self.top_panel.grid_columnconfigure(column_index, weight=1)
+        self.toolbar_content = ctk.CTkFrame(
+            self.top_panel,
+            fg_color="transparent"
+        )
+        self.toolbar_content.pack(
+            side="left",
+            fill="y",
+            padx=0,
+            pady=0
+        )
 
         # =====================================================
         # ПЕРВАЯ СТРОКА: загрузка, лист, масштаб
         # =====================================================
 
         self.btn_load = ctk.CTkButton(
-            self.top_panel,
+            self.toolbar_content,
             text="Загрузить Excel",
             command=self.load_excel,
-            width=140
+            width=150
         )
         self.btn_load.grid(
             row=0,
             column=0,
             sticky="w",
-            padx=(8, 6),
+            padx=(8, 8),
             pady=(8, 4)
         )
 
         self.sheet_label = ctk.CTkLabel(
-            self.top_panel,
+            self.toolbar_content,
             text="Лист:"
         )
         self.sheet_label.grid(
             row=0,
             column=1,
             sticky="e",
-            padx=(6, 4),
+            padx=(8, 4),
             pady=(8, 4)
         )
 
         self.sheet_menu = ctk.CTkOptionMenu(
-            self.top_panel,
+            self.toolbar_content,
             values=[self.DEFAULT_SHEET_TEXT],
             variable=self.sheet_var,
             command=self.load_selected_sheet,
-            width=220,
+            width=240,
             state="disabled"
         )
         self.sheet_menu.grid(
             row=0,
             column=2,
             sticky="w",
-            padx=(4, 8),
+            padx=(4, 12),
             pady=(8, 4)
         )
 
         self.zoom_frame = ctk.CTkFrame(
-            self.top_panel,
+            self.toolbar_content,
             fg_color="transparent"
         )
         self.zoom_frame.grid(
             row=0,
             column=3,
             sticky="w",
-            padx=8,
+            padx=(8, 8),
             pady=(8, 4)
         )
 
@@ -192,67 +209,73 @@ class ExcelViewerFrame(ctk.CTkFrame):
         # =====================================================
 
         self.btn_send_selected_1 = ctk.CTkButton(
-            self.top_panel,
+            self.toolbar_content,
             text="Выделенное → Поле 1",
-            command=lambda: self.send_selected_cells(1, append=False)
+            command=lambda: self.send_selected_cells(1, append=False),
+            width=180
         )
         self.btn_send_selected_1.grid(
             row=1,
             column=0,
-            sticky="ew",
-            padx=(8, 6),
+            sticky="w",
+            padx=(8, 8),
             pady=(4, 8)
         )
 
         self.btn_send_selected_2 = ctk.CTkButton(
-            self.top_panel,
+            self.toolbar_content,
             text="Выделенное → Поле 2",
-            command=lambda: self.send_selected_cells(2, append=False)
+            command=lambda: self.send_selected_cells(2, append=False),
+            width=180
         )
         self.btn_send_selected_2.grid(
             row=1,
             column=1,
-            sticky="ew",
-            padx=6,
+            columnspan=2,
+            sticky="w",
+            padx=(8, 8),
             pady=(4, 8)
         )
 
         self.btn_append_selected_1 = ctk.CTkButton(
-            self.top_panel,
+            self.toolbar_content,
             text="Добавить → Поле 1",
-            command=lambda: self.send_selected_cells(1, append=True)
+            command=lambda: self.send_selected_cells(1, append=True),
+            width=180
         )
         self.btn_append_selected_1.grid(
             row=1,
-            column=2,
-            sticky="ew",
-            padx=6,
+            column=3,
+            sticky="w",
+            padx=(8, 8),
             pady=(4, 8)
         )
 
         self.btn_append_selected_2 = ctk.CTkButton(
-            self.top_panel,
+            self.toolbar_content,
             text="Добавить → Поле 2",
-            command=lambda: self.send_selected_cells(2, append=True)
+            command=lambda: self.send_selected_cells(2, append=True),
+            width=180
         )
         self.btn_append_selected_2.grid(
             row=1,
-            column=3,
-            sticky="ew",
-            padx=6,
+            column=4,
+            sticky="w",
+            padx=(8, 8),
             pady=(4, 8)
         )
 
         self.btn_clear_selection = ctk.CTkButton(
-            self.top_panel,
+            self.toolbar_content,
             text="Сбросить выделение",
-            command=self.clear_selection
+            command=self.clear_selection,
+            width=180
         )
         self.btn_clear_selection.grid(
             row=1,
-            column=4,
-            sticky="ew",
-            padx=(6, 8),
+            column=5,
+            sticky="w",
+            padx=(8, 8),
             pady=(4, 8)
         )
 

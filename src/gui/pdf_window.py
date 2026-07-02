@@ -189,13 +189,15 @@ class PDFViewerFrame(ctk.CTkFrame):
         self._refresh_file_tabs_panel()
 
     def _create_top_panel(self):
-        """
-        Создаёт верхнюю панель управления.
-        """
+        """Создаёт верхнюю панель управления с горизонтальной прокруткой."""
 
-        self.top_panel = ctk.CTkFrame(self, height=40)
+        self.top_panel = ctk.CTkScrollableFrame(
+            self,
+            height=54,
+            orientation="horizontal"
+        )
         self.top_panel.grid(
-            row=1,
+            row=0,
             column=0,
             sticky="ew",
             padx=10,
@@ -269,15 +271,18 @@ class PDFViewerFrame(ctk.CTkFrame):
 
     def _create_ocr_panel(self):
         """
-        Создаёт панель OCR-настроек.
+        Создаёт панель OCR-настроек с горизонтальной прокруткой.
 
-        Режим OCR один.
-        Пользователь выбирает только языки распознавания.
+        Это нужно, чтобы языки OCR не обрезались при уменьшении окна.
         """
 
-        self.ocr_panel = ctk.CTkFrame(self, height=40)
+        self.ocr_panel = ctk.CTkScrollableFrame(
+            self,
+            height=54,
+            orientation="horizontal"
+        )
         self.ocr_panel.grid(
-            row=2,
+            row=1,
             column=0,
             sticky="ew",
             padx=10,
@@ -311,9 +316,9 @@ class PDFViewerFrame(ctk.CTkFrame):
                 variable=variable,
                 onvalue=True,
                 offvalue=False,
-                width=85
+                width=90
             )
-            checkbox.pack(side="left", padx=4, pady=5)
+            checkbox.pack(side="left", padx=6, pady=5)
 
     def _create_canvas(self):
         """

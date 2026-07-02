@@ -103,9 +103,18 @@ class CompareSection(ctk.CTkFrame):
         )
 
     def _create_settings_panel(self):
-        """Создаёт панель настроек сравнения."""
+        """
+        Создаёт панель настроек сравнения.
 
-        self.settings_frame = ctk.CTkFrame(self)
+        Панель сделана горизонтально прокручиваемой,
+        чтобы чекбоксы и кнопка очистки не пропадали при уменьшении окна.
+        """
+
+        self.settings_frame = ctk.CTkScrollableFrame(
+            self,
+            height=150,
+            orientation="horizontal"
+        )
         self.settings_frame.grid(
             row=1,
             column=0,
@@ -114,14 +123,26 @@ class CompareSection(ctk.CTkFrame):
             pady=(5, 10)
         )
 
+        self.settings_content = ctk.CTkFrame(
+            self.settings_frame,
+            fg_color="transparent"
+        )
+        self.settings_content.pack(
+            side="left",
+            fill="y",
+            padx=0,
+            pady=0
+        )
+
         for column_index in range(3):
-            self.settings_frame.grid_columnconfigure(
+            self.settings_content.grid_columnconfigure(
                 column_index,
-                weight=1
+                minsize=330,
+                weight=0
             )
 
         self.ignore_whitespace_checkbox = ctk.CTkCheckBox(
-            self.settings_frame,
+            self.settings_content,
             text="Игнорировать пробелы и переносы",
             variable=self.ignore_whitespace_var,
             command=self.clear_highlights
@@ -135,7 +156,7 @@ class CompareSection(ctk.CTkFrame):
         )
 
         self.case_sensitive_checkbox = ctk.CTkCheckBox(
-            self.settings_frame,
+            self.settings_content,
             text="Учитывать регистр",
             variable=self.case_sensitive_var,
             command=self.clear_highlights
@@ -149,7 +170,7 @@ class CompareSection(ctk.CTkFrame):
         )
 
         self.ignore_punctuation_checkbox = ctk.CTkCheckBox(
-            self.settings_frame,
+            self.settings_content,
             text="Игнорировать пунктуацию",
             variable=self.ignore_punctuation_var,
             command=self.clear_highlights
@@ -163,7 +184,7 @@ class CompareSection(ctk.CTkFrame):
         )
 
         self.find_similar_block_checkbox = ctk.CTkCheckBox(
-            self.settings_frame,
+            self.settings_content,
             text="Искать похожие блоки",
             variable=self.find_similar_block_var,
             command=self.clear_highlights
@@ -177,7 +198,7 @@ class CompareSection(ctk.CTkFrame):
         )
 
         self.ignore_word_order_checkbox = ctk.CTkCheckBox(
-            self.settings_frame,
+            self.settings_content,
             text="Не учитывать порядок слов внутри сравнения",
             variable=self.ignore_word_order_var,
             command=self.clear_highlights
@@ -191,7 +212,7 @@ class CompareSection(ctk.CTkFrame):
         )
 
         self.show_matches_checkbox = ctk.CTkCheckBox(
-            self.settings_frame,
+            self.settings_content,
             text="Подсвечивать совпадения",
             variable=self.show_matches_var,
             command=self.clear_highlights
@@ -205,10 +226,10 @@ class CompareSection(ctk.CTkFrame):
         )
 
         self.btn_clear_highlights = ctk.CTkButton(
-            self.settings_frame,
+            self.settings_content,
             text="Очистить подсветку",
             command=self.clear_highlights,
-            width=160
+            width=180
         )
         self.btn_clear_highlights.grid(
             row=2,
