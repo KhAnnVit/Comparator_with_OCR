@@ -7,8 +7,8 @@ if hasattr(sys, '_MEIPASS'):
     # Путь к временной папке, куда PyInstaller распакует poppler и tesseract при запуске
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    # Путь на компьютере при разработке (поднимаемся на уровень выше из папки src)
-    # Предполагается, что config.py лежит в папке src/. Если он в корне, уберите один .parent
+    # Путь к корню проекта при разработке.
+    # config.py лежит в корне проекта.
     BASE_DIR = Path(__file__).resolve().parent
 
 # 2. Определяем базовую директорию для ВНЕШНИХ пользовательских данных
@@ -29,6 +29,9 @@ RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- НАСТРОЙКИ СИСТЕМНЫХ УТИЛИТ ---
+# Для exe эти папки должны быть добавлены в сборку PyInstaller:
+# - poppler
+# - Tesseract-OCR
 if hasattr(sys, '_MEIPASS'):
     POPPLER_PATH = BASE_DIR / "poppler" / "bin"
     TESSERACT_EXE = BASE_DIR / "Tesseract-OCR" / "tesseract.exe"
