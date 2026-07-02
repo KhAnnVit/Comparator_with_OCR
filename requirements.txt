@@ -1,0 +1,11 @@
+customtkinter
+pillow
+pytesseract
+opencv-python
+numpy
+pdf2image
+pandas
+openpyxl
+xlrd
+tksheet
+pyinstaller
