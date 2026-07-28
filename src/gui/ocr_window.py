@@ -1,3 +1,5 @@
+import re
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import Menu, messagebox
@@ -16,6 +18,7 @@ class OCRViewerFrame(ctk.CTkFrame):
     - показывает вырезанный фрагмент изображения;
     - показывает распознанный текст;
     - сохраняет ручные правки текста при переключении вкладок;
+    - позволяет обработать распознанный текст;
     - позволяет отправить весь текст в поле сравнения;
     - позволяет отправить выделенный фрагмент текста в поле сравнения.
     """
@@ -51,7 +54,7 @@ class OCRViewerFrame(ctk.CTkFrame):
         # row=0 — вкладки OCR
         # row=1 — превью изображения
         # row=2 — текст OCR, занимает всё свободное место
-        # row=3 — кнопки переноса текста
+        # row=3 — кнопки обработки и переноса текста
         self.grid_rowconfigure(0, weight=0)
         self.grid_rowconfigure(1, weight=0)
         self.grid_rowconfigure(2, weight=1)
@@ -130,7 +133,7 @@ class OCRViewerFrame(ctk.CTkFrame):
         self._set_text(self.DEFAULT_TEXT)
 
     def _create_bottom_panel(self):
-        """Создаёт нижнюю панель с кнопками переноса текста."""
+        """Создаёт нижнюю панель с кнопками обработки и переноса текста."""
 
         self.bottom_panel = ctk.CTkFrame(self)
         self.bottom_panel.grid(
@@ -178,7 +181,7 @@ class OCRViewerFrame(ctk.CTkFrame):
             row=1,
             column=0,
             padx=5,
-            pady=(4, 10),
+            pady=(4, 4),
             sticky="ew"
         )
 
@@ -190,6 +193,20 @@ class OCRViewerFrame(ctk.CTkFrame):
         self.btn_append_2.grid(
             row=1,
             column=1,
+            padx=5,
+            pady=(4, 4),
+            sticky="ew"
+        )
+
+        self.btn_remove_linebreaks = ctk.CTkButton(
+            self.bottom_panel,
+            text="Убрать переносы строк",
+            command=self.remove_linebreaks_from_text
+        )
+        self.btn_remove_linebreaks.grid(
+            row=2,
+            column=0,
+            columnspan=2,
             padx=5,
             pady=(4, 10),
             sticky="ew"
@@ -553,6 +570,40 @@ class OCRViewerFrame(ctk.CTkFrame):
             return self.textbox.get("sel.first", "sel.last").strip()
         except tk.TclError:
             return ""
+
+    def remove_linebreaks_from_text(self):
+        """
+        Убирает переносы строк и лишние пробелы из OCR-текста.
+
+        Было:
+            Состав:
+            Aqua
+            Glycerin
+
+        Стало:
+            Состав: Aqua Glycerin
+        """
+
+        text = self._get_full_text()
+
+        if not text:
+            messagebox.showwarning(
+                "OCR-текст пуст",
+                "Нет текста для обработки."
+            )
+            logger.warning("Попытка обработать пустой OCR-текст")
+            return
+
+        cleaned_text = re.sub(r"\s+", " ", text).strip()
+
+        self._set_text(cleaned_text)
+        self._save_current_ocr_tab()
+
+        logger.info(
+            "OCR-текст преобразован: переносы строк удалены. old_length=%s, new_length=%s",
+            len(text),
+            len(cleaned_text)
+        )
 
     # =========================================================
     # ОТПРАВКА ТЕКСТА В СРАВНЕНИЕ
